@@ -19,22 +19,46 @@ from io import BytesIO
 from typing import Any, AsyncIterator, Generic, Optional, TypeVar
 
 import httpx
+from anthropic import AsyncAnthropic
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+# Load environment variables from .env file
+load_dotenv(dotenv_path="/Users/nabehiro/Desktop/Next_Career 2/.env")
+
+# Parse .env file manually as fallback
+def load_env_from_file(filepath: str) -> dict[str, str]:
+    """Load environment variables from .env file."""
+    env_vars = {}
+    try:
+        with open(filepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and "=" in line and not line.startswith("#"):
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip()
+    except FileNotFoundError:
+        pass
+    return env_vars
+
+# Try to load from file first, then from environment
+env_file_path = "/Users/nabehiro/Desktop/Next_Career 2/.env"
+env_file_vars = load_env_from_file(env_file_path) if os.path.exists(env_file_path) else {}
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-GOOGLE_API_KEY = os.getenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
-RATE_LIMIT_DISABLED = os.getenv("RATE_LIMIT_DISABLED", "").lower() == "true"
-DEFAULT_PROVIDER = os.getenv("AI_PROVIDER", "claude")
-FALLBACK_ORDER: list[str] = os.getenv("AI_FALLBACK_ORDER", "claude,openai,gemini").split(",")
+ANTHROPIC_API_KEY = env_file_vars.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY = env_file_vars.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+GOOGLE_API_KEY = env_file_vars.get("GOOGLE_GENERATIVE_AI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
+RATE_LIMIT_DISABLED = (env_file_vars.get("RATE_LIMIT_DISABLED") or os.getenv("RATE_LIMIT_DISABLED", "")).lower() == "true"
+DEFAULT_PROVIDER = env_file_vars.get("AI_PROVIDER") or os.getenv("AI_PROVIDER", "claude")
+FALLBACK_ORDER: list[str] = (env_file_vars.get("AI_FALLBACK_ORDER") or os.getenv("AI_FALLBACK_ORDER", "claude,openai,gemini")).split(",")
 
 # ---------------------------------------------------------------------------
 # Pydantic Models  (CRITICAL #1: SessionState, CRITICAL #2: InterviewMaterials)
@@ -216,8 +240,10 @@ class PIIMasker:
         ("EMAIL", re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")),
         ("PHONE", re.compile(r"0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}")),
         ("POSTAL", re.compile(r"\d{3}-?\d{4}")),
+        # BIRTHDAY: Match Japanese date formats (日付記載) but NOT ISO format (YYYY-MM-DD used in APIs)
+        # Negative lookahead (?!.*\d-\d) to exclude patterns like "2025-06-01"
         ("BIRTHDAY", re.compile(
-            r"(19|20)\d{2}[/年-](0?[1-9]|1[0-2])[/月-](0?[1-9]|[12]\d|3[01])日?"
+            r"(19|20)\d{2}[/年](0?[1-9]|1[0-2])[/月](0?[1-9]|[12]\d|3[01])日?"
         )),
         ("NAME_JP", re.compile(
             r"(?:氏名|名前)\s*[:：]\s*[　-鿿]{1,4}\s*[　-鿿]{1,4}"
@@ -370,15 +396,15 @@ class TaskKind(str, Enum):
 
 MODEL_MAP: dict[str, dict[TaskKind, str]] = {
     "claude": {
-        TaskKind.EXTRACT_JOB: "claude-sonnet-4-6-20250514",
-        TaskKind.EXTRACT_RESUME: "claude-sonnet-4-6-20250514",
-        TaskKind.REVIEW: "claude-sonnet-4-6-20250514",
-        TaskKind.GEN_QA: "claude-sonnet-4-6-20250514",
-        TaskKind.GEN_PR: "claude-sonnet-4-6-20250514",
-        TaskKind.GEN_QUESTIONS: "claude-haiku-4-5-20251001",
-        TaskKind.GEN_CHECKLIST: "claude-sonnet-4-6-20250514",
-        TaskKind.COMPANY_RESEARCH: "claude-sonnet-4-6-20250514",
-        TaskKind.CHAT: "claude-sonnet-4-6-20250514",
+        TaskKind.EXTRACT_JOB: "claude-3-5-haiku-20241022",
+        TaskKind.EXTRACT_RESUME: "claude-3-5-haiku-20241022",
+        TaskKind.REVIEW: "claude-3-5-haiku-20241022",
+        TaskKind.GEN_QA: "claude-3-5-haiku-20241022",
+        TaskKind.GEN_PR: "claude-3-5-haiku-20241022",
+        TaskKind.GEN_QUESTIONS: "claude-3-5-haiku-20241022",
+        TaskKind.GEN_CHECKLIST: "claude-3-5-haiku-20241022",
+        TaskKind.COMPANY_RESEARCH: "claude-3-5-haiku-20241022",
+        TaskKind.CHAT: "claude-3-5-haiku-20241022",
     },
     "openai": {k: "gpt-4o" for k in TaskKind},
     "gemini": {k: "gemini-2.5-flash" for k in TaskKind},
@@ -404,54 +430,121 @@ class AIProvider(ABC):
 class ClaudeProvider(AIProvider):
     name = "claude"
 
-    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-sonnet-4-6-20250514", **kw: Any) -> dict:
-        async with httpx.AsyncClient(timeout=120) as c:
-            body: dict[str, Any] = {"model": model, "max_tokens": 4096, "messages": [{"role": "user", "content": prompt}]}
-            if system:
-                body["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-            r = await c.post("https://api.anthropic.com/v1/messages", json=body, headers={
-                "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json",
-                "anthropic-beta": "prompt-caching-2024-07-31",
-            })
-            r.raise_for_status()
-            data = r.json()
-            text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
-            return {"text": text, "usage": data.get("usage", {})}
+    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> dict:
+        # Adjust max_tokens based on model
+        max_tokens = 2048 if "haiku" in model else 4096
 
-    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-sonnet-4-6-20250514", **kw: Any) -> AsyncIterator[dict]:
-        async with httpx.AsyncClient(timeout=120) as c:
-            body: dict[str, Any] = {"model": model, "max_tokens": 4096, "stream": True, "messages": [{"role": "user", "content": prompt}]}
-            if system:
-                body["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-            async with c.stream("POST", "https://api.anthropic.com/v1/messages", json=body, headers={
-                "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json",
-                "anthropic-beta": "prompt-caching-2024-07-31",
-            }) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    payload = json.loads(line[6:])
-                    if payload.get("type") == "content_block_delta":
-                        delta = payload.get("delta", {}).get("text", "")
-                        yield {"type": "text-delta", "delta": delta}
-                    elif payload.get("type") == "message_stop":
-                        yield {"type": "finish", "usage": payload.get("usage", {})}
+        # Create explicit http_client to avoid deprecated proxies parameter issue
+        http_client = httpx.AsyncClient(timeout=120)
+        try:
+            client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=http_client)
+            print(f"[DEBUG] AsyncAnthropic client created successfully")
+        except Exception as e:
+            print(f"[ERROR] Failed to create AsyncAnthropic client: {e}")
+            await http_client.aclose()
+            raise
 
-    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-sonnet-4-6-20250514", **kw: Any) -> dict:
-        b64 = b64encode(image).decode()
-        messages = [{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
-            {"type": "text", "text": prompt},
-        ]}]
-        async with httpx.AsyncClient(timeout=120) as c:
-            r = await c.post("https://api.anthropic.com/v1/messages", json={"model": model, "max_tokens": 4096, "messages": messages}, headers={
-                "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json",
-            })
-            r.raise_for_status()
-            data = r.json()
-            text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
-            return {"text": text, "usage": data.get("usage", {})}
+        try:
+            # Build system messages if provided
+            system_blocks = None
+            if system:
+                system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+            # Call Anthropic API using SDK
+            response = await client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_blocks if system_blocks else None,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            # Extract text from response
+            text = "".join(b.text for b in response.content if b.type == "text")
+            return {"text": text, "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens}}
+        finally:
+            await http_client.aclose()
+
+    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> AsyncIterator[dict]:
+        # Adjust max_tokens based on model
+        max_tokens = 2048 if "haiku" in model else 4096
+
+        # Create explicit http_client to avoid deprecated proxies parameter issue
+        http_client = httpx.AsyncClient(timeout=120)
+        try:
+            client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=http_client)
+            print(f"[DEBUG] AsyncAnthropic client created successfully")
+        except Exception as e:
+            print(f"[ERROR] Failed to create AsyncAnthropic client: {e}")
+            await http_client.aclose()
+            raise
+
+        print(f"[DEBUG ClaudeProvider.stream_text] Sending request to Anthropic API:")
+        print(f"  Model: {model}")
+        print(f"  API Key: {ANTHROPIC_API_KEY[:30]}...{ANTHROPIC_API_KEY[-20:]}")
+        print(f"  System: {system[:100] if system else 'None'}...")
+        print(f"  Prompt length: {len(prompt)}")
+
+        # Build system messages if provided
+        system_param = None
+        if system:
+            system_param = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+        # Use SDK streaming with async context manager - automatically handles version negotiation
+        try:
+            print(f"[DEBUG] Starting messages.stream with model={model}, max_tokens={max_tokens}")
+            async with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_param if system_param else None,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
+                print(f"[DEBUG] Stream context manager entered successfully")
+                # Stream text deltas
+                async for text in stream.text_stream:
+                    if text:
+                        yield {"type": "text-delta", "delta": text}
+                print(f"[DEBUG] Stream text_stream iteration completed")
+
+            # After stream completes, get final message for usage stats
+            print(f"[DEBUG] Getting final message from stream")
+            final_message = await stream.get_final_message()
+            yield {"type": "finish", "usage": {"input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens}}
+        except Exception as e:
+            print(f"[ERROR] Exception during streaming: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        finally:
+            await http_client.aclose()
+
+    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> dict:
+        # Adjust max_tokens based on model
+        max_tokens = 2048 if "haiku" in model else 4096
+        http_client = httpx.AsyncClient(timeout=120)
+        try:
+            client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=http_client)
+
+            # Encode image to base64
+            b64 = b64encode(image).decode()
+
+            # Call Anthropic API using SDK with image
+            response = await client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+                        {"type": "text", "text": prompt},
+                    ]
+                }]
+            )
+
+            # Extract text from response
+            text = "".join(b.text for b in response.content if b.type == "text")
+            return {"text": text, "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens}}
+        finally:
+            await http_client.aclose()
 
 
 class OpenAIProvider(AIProvider):
@@ -682,7 +775,31 @@ async def extract(request: Request, file: UploadFile):
         "Extract applicant profile from this document. Return JSON with: name, age, careerHistory (array of {company, periodFrom, periodTo, role, achievements}), qualifications, selfPr.",
         model=model,
     )
-    return ok({"extracted": result["text"]}, request_id=rid, provider=provider.name, model=model)
+
+    # Parse LLM output as JSON and validate structure
+    llm_text = result["text"].strip()
+    applicant_data = None
+
+    try:
+        # Try to extract JSON from LLM output (may be wrapped in markdown code blocks)
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', llm_text)
+        if json_match:
+            json_str = json_match.group(1).strip()
+        else:
+            json_str = llm_text
+
+        parsed = json.loads(json_str)
+
+        # Validate against ApplicantProfile schema
+        applicant_data = ApplicantProfile(**parsed)
+    except (json.JSONDecodeError, ValueError) as e:
+        # If JSON parsing fails, return error with raw text for debugging
+        return err(f"Failed to parse extracted data as JSON: {str(e)}", status=422, request_id=rid)
+    except Exception as e:
+        return err(f"Failed to validate extracted data: {str(e)}", status=422, request_id=rid)
+
+    # Return success with applicant profile in expected structure
+    return ok({"applicant": applicant_data.model_dump(by_alias=True)}, request_id=rid, provider=provider.name, model=model)
 
 
 @app.post("/api/review")
@@ -825,9 +942,13 @@ async def generate_pdf(body: PdfRequest, request: Request):
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(marp_content)
 
+            # Get the path to marp CLI in webapp's node_modules
+            webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
+            marp_cli = os.path.join(webapp_dir, "node_modules", ".bin", "marp")
+
             result = subprocess.run(
-                ["npx", "@marp-team/marp-cli", "--pdf", "--allow-local-files", md_path, "-o", pdf_path],
-                capture_output=True, text=True, timeout=120,
+                [marp_cli, "--pdf", "--allow-local-files", md_path, "-o", pdf_path],
+                capture_output=True, text=True, timeout=120, cwd=webapp_dir,
             )
             if result.returncode != 0:
                 return err(f"PDF generation failed for {name}: {result.stderr[:500]}", status=500, request_id=rid)
