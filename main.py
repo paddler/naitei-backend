@@ -1167,6 +1167,13 @@ async def generate_pdf(body: PdfRequest, request: Request):
     header = f"{body.company_name or '面接対策'} | {body.applicant_name or ''}"
     footer = f"{body.applicant_name or ''} | {body.interview_date or 'TBD'} | {body.job_title or ''}"
 
+    def _content_disposition(filename: str, ext: str) -> str:
+        """RFC 5987 encoded Content-Disposition header for non-ASCII filenames."""
+        from urllib.parse import quote
+        encoded = quote(f"{filename}{ext}", encoding="utf-8")
+        ascii_fallback = filename.encode("ascii", errors="replace").decode() + ext
+        return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
+
     try:
         # 1ファイルの場合はPDFを直接返す。複数の場合はZIPにまとめる
         if len(present) == 1:
@@ -1176,7 +1183,7 @@ async def generate_pdf(body: PdfRequest, request: Request):
                 BytesIO(pdf_bytes),
                 media_type="application/pdf",
                 headers={
-                    "Content-Disposition": f'attachment; filename="{name}.pdf"',
+                    "Content-Disposition": _content_disposition(name, ".pdf"),
                     "X-Request-Id": rid,
                 },
             )
