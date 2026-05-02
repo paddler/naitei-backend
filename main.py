@@ -1017,15 +1017,28 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
-    # Japanese font registration (use system fonts if available, otherwise fall back to Helvetica)
-    font_name = "Helvetica"
-    bold_font = "Helvetica-Bold"
-    for font_path, name in [
-        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu"),
-        ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraKaku"),
+    # Japanese font registration
+    # Priority: system TTF/OTF → ReportLab built-in CID (UniJIS-UTF8-H) → ASCII-safe fallback
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+    font_name = None
+    bold_font = None
+
+    # 1. Try system Japanese fonts (TTF/OTF)
+    candidate_fonts = [
+        # nixpacks noto-fonts-cjk-serif (Railway)
+        ("/root/.nix-profile/share/fonts/noto-cjk/NotoSerifCJK-Regular.ttc", "NotoSerifCJK"),
+        ("/root/.nix-profile/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "NotoSansCJK"),
+        ("/nix/store/noto-fonts-cjk-serif/share/fonts/noto-cjk/NotoSerifCJK-Regular.ttc", "NotoSerifCJK"),
+        # Ubuntu / Debian
         ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
         ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
-    ]:
+        ("/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf", "NotoSans"),
+        # macOS (local dev)
+        ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraKaku"),
+        ("/Library/Fonts/NotoSansCJK-Regular.ttc", "NotoSans"),
+    ]
+    for font_path, name in candidate_fonts:
         if os.path.exists(font_path):
             try:
                 pdfmetrics.registerFont(TTFont(name, font_path))
@@ -1034,6 +1047,20 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
                 break
             except Exception:
                 pass
+
+    # 2. Fall back to ReportLab's built-in CID font for Japanese (no TTF needed)
+    if font_name is None:
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+            font_name = "HeiseiKakuGo-W5"
+            bold_font = "HeiseiKakuGo-W5"
+        except Exception:
+            pass
+
+    # 3. Last resort: Helvetica (ASCII only – Japanese will be replaced)
+    if font_name is None:
+        font_name = "Helvetica"
+        bold_font = "Helvetica-Bold"
 
     buf = BytesIO()
     doc = SimpleDocTemplate(
