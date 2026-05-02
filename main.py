@@ -841,7 +841,14 @@ Document content:
     try:
         result = await provider.generate_text(prompt, model=model)
     except Exception as e:
-        return err(f"AI service error: {type(e).__name__}: {str(e)[:200]}", status=500, request_id=rid)
+        # AI failed but we still have the raw file text — return a minimal profile so step3 can proceed
+        fallback = ApplicantProfile(name="", raw_text=file_text[:4000])
+        content_type = file.content_type or "text/plain"
+        return ok({
+            "applicant": fallback.model_dump(by_alias=True),
+            "sources": [{"fileName": file.filename or "uploaded-file", "mimeType": content_type, "pageCount": 1, "extractionMethod": "fallback-raw"}],
+            "warnings": [f"AI extraction failed ({type(e).__name__}), raw text preserved for review"]
+        }, request_id=rid, provider=provider.name, model=model)
 
     # Parse LLM output as JSON and validate structure
     llm_text = result["text"].strip()
@@ -893,13 +900,30 @@ Document content:
 async def review(body: ReviewRequest, request: Request):
     rid = request.state.request_id
     provider = get_provider()
-    prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        f"Target: {body.target}, Tone: {body.tone}\n"
-        "Review the applicant's documents for this position. Provide: revisedText, diffs, comments with severity, fitScore, and summary."
+    applicant = body.applicant
+    company = body.company
+    # Use rawText as fallback if structured fields are empty
+    applicant_text = (
+        applicant.raw_text
+        or applicant.self_pr
+        or (", ".join(f"{c.role} at {c.company}" for c in applicant.career_history) if applicant.career_history else "")
+        or "(応募者情報なし)"
     )
-    return await sse_stream(provider, prompt, "You are an expert career advisor reviewing Japanese job application documents.", TaskKind.REVIEW, rid)
+    company_text = (
+        company.raw_text
+        or company.job_description
+        or f"{company.name} {company.job_title}".strip()
+        or "(求人情報なし)"
+    )
+    prompt = (
+        f"【応募者情報】\n{applicant_text[:3000]}\n\n"
+        f"【求人情報】\n{company_text[:2000]}\n\n"
+        f"ターゲット: {body.target}, トーン: {body.tone}\n\n"
+        "上記の応募者の職務経歴書・志望動機を、求人要件に合わせて日本語で添削してください。"
+        "改善後のテキスト、具体的な変更点、コメント（重要度別）、適合度スコア（0-100）、総評を提供してください。"
+        "応募者情報や求人情報が不完全でも、提供された情報をもとに最善の添削を行ってください。"
+    )
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。応募者の書類を丁寧に添削します。", TaskKind.REVIEW, rid)
 
 
 @app.post("/api/interview/qa")
