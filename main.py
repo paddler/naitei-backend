@@ -59,7 +59,7 @@ ANTHROPIC_API_KEY = env_file_vars.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROP
 OPENAI_API_KEY = env_file_vars.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = env_file_vars.get("GOOGLE_GENERATIVE_AI_API_KEY") or os.getenv("GOOGLE_GENERATIVE_AI_API_KEY", "")
 RATE_LIMIT_DISABLED = (env_file_vars.get("RATE_LIMIT_DISABLED") or os.getenv("RATE_LIMIT_DISABLED", "")).lower() == "true"
-DEFAULT_PROVIDER = env_file_vars.get("AI_PROVIDER") or os.getenv("AI_PROVIDER", "openai")
+DEFAULT_PROVIDER = env_file_vars.get("AI_PROVIDER") or os.getenv("AI_PROVIDER", "claude")
 FALLBACK_ORDER: list[str] = (env_file_vars.get("AI_FALLBACK_ORDER") or os.getenv("AI_FALLBACK_ORDER", "claude,openai,gemini")).split(",")
 
 # ---------------------------------------------------------------------------
@@ -430,15 +430,15 @@ class TaskKind(str, Enum):
 
 MODEL_MAP: dict[str, dict[TaskKind, str]] = {
     "claude": {
-        TaskKind.EXTRACT_JOB: "claude-3-haiku-20240307",
-        TaskKind.EXTRACT_RESUME: "claude-3-haiku-20240307",
-        TaskKind.REVIEW: "claude-3-haiku-20240307",
-        TaskKind.GEN_QA: "claude-3-haiku-20240307",
-        TaskKind.GEN_PR: "claude-3-haiku-20240307",
-        TaskKind.GEN_QUESTIONS: "claude-3-haiku-20240307",
-        TaskKind.GEN_CHECKLIST: "claude-3-haiku-20240307",
-        TaskKind.COMPANY_RESEARCH: "claude-3-haiku-20240307",
-        TaskKind.CHAT: "claude-3-haiku-20240307",
+        TaskKind.EXTRACT_JOB: "claude-haiku-4-5",
+        TaskKind.EXTRACT_RESUME: "claude-haiku-4-5",
+        TaskKind.REVIEW: "claude-haiku-4-5",
+        TaskKind.GEN_QA: "claude-haiku-4-5",
+        TaskKind.GEN_PR: "claude-haiku-4-5",
+        TaskKind.GEN_QUESTIONS: "claude-haiku-4-5",
+        TaskKind.GEN_CHECKLIST: "claude-haiku-4-5",
+        TaskKind.COMPANY_RESEARCH: "claude-haiku-4-5",
+        TaskKind.CHAT: "claude-haiku-4-5",
     },
     "openai": {k: "gpt-4o" for k in TaskKind},
     "gemini": {k: "gemini-2.5-flash" for k in TaskKind},
@@ -464,7 +464,7 @@ class AIProvider(ABC):
 class ClaudeProvider(AIProvider):
     name = "claude"
 
-    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-3-haiku-20240307", **kw: Any) -> dict:
+    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-haiku-4-5", **kw: Any) -> dict:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
 
@@ -498,7 +498,7 @@ class ClaudeProvider(AIProvider):
         finally:
             await http_client.aclose()
 
-    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-3-haiku-20240307", **kw: Any) -> AsyncIterator[dict]:
+    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-haiku-4-5", **kw: Any) -> AsyncIterator[dict]:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
 
@@ -552,7 +552,7 @@ class ClaudeProvider(AIProvider):
         finally:
             await http_client.aclose()
 
-    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-3-haiku-20240307", **kw: Any) -> dict:
+    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-haiku-4-5", **kw: Any) -> dict:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
         http_client = httpx.AsyncClient(timeout=120)
