@@ -18,6 +18,7 @@ from enum import Enum
 from io import BytesIO
 from typing import Any, AsyncIterator, Generic, Optional, TypeVar
 
+import urllib.request
 import httpx
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
@@ -1018,25 +1019,21 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
     from reportlab.pdfbase.ttfonts import TTFont
 
     # Japanese font registration
-    # Priority: system TTF/OTF → ReportLab built-in CID (UniJIS-UTF8-H) → ASCII-safe fallback
+    # Priority: cached /tmp font → system TTF → auto-download NotoSansJP → Helvetica fallback
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+    _FONT_CACHE = "/tmp/NotoSansJP-Regular.ttf"
+    _FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf"
 
     font_name = None
     bold_font = None
 
-    # 1. Try system Japanese fonts (TTF/OTF)
+    # 1. Try system / cached Japanese TTF fonts
     candidate_fonts = [
-        # nixpacks noto-fonts-cjk-serif (Railway)
-        ("/root/.nix-profile/share/fonts/noto-cjk/NotoSerifCJK-Regular.ttc", "NotoSerifCJK"),
-        ("/root/.nix-profile/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "NotoSansCJK"),
-        ("/nix/store/noto-fonts-cjk-serif/share/fonts/noto-cjk/NotoSerifCJK-Regular.ttc", "NotoSerifCJK"),
-        # Ubuntu / Debian
+        (_FONT_CACHE, "NotoSansJP"),
         ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
         ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
-        ("/usr/share/fonts/noto-cjk/NotoSansCJKjp-Regular.otf", "NotoSans"),
-        # macOS (local dev)
         ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraKaku"),
-        ("/Library/Fonts/NotoSansCJK-Regular.ttc", "NotoSans"),
     ]
     for font_path, name in candidate_fonts:
         if os.path.exists(font_path):
@@ -1048,7 +1045,17 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
             except Exception:
                 pass
 
-    # 2. Fall back to ReportLab's built-in CID font for Japanese (no TTF needed)
+    # 2. Auto-download NotoSansJP if not found (cached in /tmp)
+    if font_name is None:
+        try:
+            urllib.request.urlretrieve(_FONT_URL, _FONT_CACHE)
+            pdfmetrics.registerFont(TTFont("NotoSansJP", _FONT_CACHE))
+            font_name = "NotoSansJP"
+            bold_font = "NotoSansJP"
+        except Exception:
+            pass
+
+    # 3. ReportLab built-in CID font (no external file needed)
     if font_name is None:
         try:
             pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
@@ -1057,7 +1064,7 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
         except Exception:
             pass
 
-    # 3. Last resort: Helvetica (ASCII only – Japanese will be replaced)
+    # 4. Last resort ASCII-only
     if font_name is None:
         font_name = "Helvetica"
         bold_font = "Helvetica-Bold"
