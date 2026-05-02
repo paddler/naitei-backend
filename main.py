@@ -858,6 +858,8 @@ Document content:
         parsed = json.loads(json_str)
 
         # Validate against ApplicantProfile schema
+        # Inject rawText from actual file content so frontend can use it for review
+        parsed["rawText"] = file_text[:4000]
         applicant_data = ApplicantProfile(**parsed)
     except (json.JSONDecodeError, ValueError) as e:
         # If JSON parsing fails, return error with raw text for debugging
