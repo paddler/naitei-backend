@@ -1204,7 +1204,9 @@ async def generate_pdf(body: PdfRequest, request: Request):
             },
         )
     except Exception as e:
-        return err(f"PDF generation failed: {type(e).__name__}: {str(e)[:300]}", status=500, request_id=rid)
+        import traceback
+        tb = traceback.format_exc()
+        return err(f"PDF generation failed: {type(e).__name__}: {str(e)[:300]}\nTraceback:\n{tb[-800:]}", status=500, request_id=rid)
 
 
 # ---------------------------------------------------------------------------
