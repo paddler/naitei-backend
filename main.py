@@ -722,6 +722,16 @@ app = FastAPI(title="Naitei.ai", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+# Global exception handler — ensures all unhandled exceptions return JSON (not plain text)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    rid = getattr(request.state, "request_id", "")
+    return JSONResponse(
+        {"success": False, "data": None, "error": f"Internal server error: {type(exc).__name__}", "meta": {"requestId": rid}},
+        status_code=500,
+    )
+
+
 # --- CSP Nonce + Security Headers Middleware (CRITICAL #4) ---
 
 @app.middleware("http")
@@ -827,7 +837,10 @@ Return ONLY a JSON object (no markdown, no code blocks) with these exact fields:
 Document content:
 {file_text[:4000]}"""  # Limit to 4000 chars to avoid token overrun
 
-    result = await provider.generate_text(prompt, model=model)
+    try:
+        result = await provider.generate_text(prompt, model=model)
+    except Exception as e:
+        return err(f"AI service error: {type(e).__name__}: {str(e)[:200]}", status=500, request_id=rid)
 
     # Parse LLM output as JSON and validate structure
     llm_text = result["text"].strip()
