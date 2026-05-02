@@ -538,11 +538,12 @@ class ClaudeProvider(AIProvider):
                     if text:
                         yield {"type": "text-delta", "delta": text}
                 print(f"[DEBUG] Stream text_stream iteration completed")
-
-            # After stream completes, get final message for usage stats
-            print(f"[DEBUG] Getting final message from stream")
-            final_message = await stream.get_final_message()
-            yield {"type": "finish", "usage": {"input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens}}
+                # get_final_message は with ブロック内で呼ぶ（ブロック外では無効になる場合がある）
+                try:
+                    final_message = await stream.get_final_message()
+                    yield {"type": "finish", "usage": {"input_tokens": final_message.usage.input_tokens, "output_tokens": final_message.usage.output_tokens}}
+                except Exception:
+                    yield {"type": "finish", "usage": {}}
         except Exception as e:
             print(f"[ERROR] Exception during streaming: {type(e).__name__}: {e}")
             import traceback
@@ -978,25 +979,112 @@ async def research(body: ResearchRequest, request: Request):
     return await sse_stream(provider, prompt, "You are a thorough company research analyst for Japanese job market.", TaskKind.COMPANY_RESEARCH, rid)
 
 
-# --- /api/pdf  (CRITICAL #3: 4-file bundling) ---
+# --- /api/pdf  (ReportLab ベース PDF 生成) ---
 
-MARP_THEME_CSS = """/* Naitei.ai Marp theme */
-section { padding: 32px 46px; font-size: 16px; font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif; }
-section.title { background: linear-gradient(135deg, #0b1e4d, #3b82f6); color: white; }
-blockquote { font-size: 14.5px; }
-.sep { border-top: 2px dashed #93c5fd; margin: 10px 0; }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-.tip { background: #fef3c7; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
-.ng { background: #fef2f2; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
-.ok { background: #ecfdf5; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
-"""
+def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: str) -> bytes:
+    """マークダウンテキストを ReportLab で PDF バイト列に変換する。"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Japanese font registration (use system fonts if available, otherwise fall back to Helvetica)
+    font_name = "Helvetica"
+    bold_font = "Helvetica-Bold"
+    for font_path, name in [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu"),
+        ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraKaku"),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
+        ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
+    ]:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, font_path))
+                font_name = name
+                bold_font = name
+                break
+            except Exception:
+                pass
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=20 * mm, rightMargin=20 * mm,
+        topMargin=25 * mm, bottomMargin=25 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal = ParagraphStyle(
+        "jp_normal", parent=styles["Normal"],
+        fontName=font_name, fontSize=10, leading=16, spaceAfter=4,
+    )
+    style_h1 = ParagraphStyle(
+        "jp_h1", parent=styles["Heading1"],
+        fontName=bold_font, fontSize=16, leading=22, spaceBefore=12, spaceAfter=6,
+        textColor=colors.HexColor("#0b1e4d"),
+    )
+    style_h2 = ParagraphStyle(
+        "jp_h2", parent=styles["Heading2"],
+        fontName=bold_font, fontSize=13, leading=18, spaceBefore=10, spaceAfter=4,
+        textColor=colors.HexColor("#1e40af"),
+    )
+    style_h3 = ParagraphStyle(
+        "jp_h3", parent=styles["Heading3"],
+        fontName=bold_font, fontSize=11, leading=16, spaceBefore=8, spaceAfter=3,
+        textColor=colors.HexColor("#374151"),
+    )
+    style_header = ParagraphStyle(
+        "jp_header", parent=styles["Normal"],
+        fontName=bold_font, fontSize=8, textColor=colors.gray, alignment=1,
+    )
+
+    story = []
+    # Page header
+    story.append(Paragraph(header, style_header))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#3b82f6")))
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph(title, style_h1))
+    story.append(Spacer(1, 4 * mm))
+
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            story.append(Spacer(1, 3 * mm))
+            continue
+        # Escape XML special chars for ReportLab
+        safe = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if stripped.startswith("### "):
+            story.append(Paragraph(safe[4:], style_h3))
+        elif stripped.startswith("## "):
+            story.append(Paragraph(safe[3:], style_h2))
+        elif stripped.startswith("# "):
+            story.append(Paragraph(safe[2:], style_h1))
+        elif stripped.startswith("---"):
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
+            story.append(Spacer(1, 2 * mm))
+        else:
+            # Bold (**text**) simple conversion
+            safe = safe.replace("**", "<b>", 1) if "**" in safe else safe
+            safe = safe.replace("**", "</b>", 1) if "**" in safe else safe
+            story.append(Paragraph(safe, style_normal))
+
+    # Page footer
+    story.append(Spacer(1, 6 * mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
+    story.append(Paragraph(footer, style_header))
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 @app.post("/api/pdf")
 async def generate_pdf(body: PdfRequest, request: Request):
     rid = request.state.request_id
     files_map = {
-        "01_想定問答集": body.materials.qa,
+        "01_添削レポート": body.materials.qa,
         "02_自己PR案": body.materials.pr,
         "03_逆質問集": body.materials.questions,
         "04_事前準備チェックリスト": body.materials.checklist,
@@ -1006,52 +1094,27 @@ async def generate_pdf(body: PdfRequest, request: Request):
     if not present:
         return err("No interview materials provided", status=422, request_id=rid)
 
-    header = f"{body.company_name} 面接対策"
-    footer = f"{body.applicant_name} | {body.interview_date or 'TBD'} | {body.job_title}"
+    header = f"{body.company_name or '面接対策'} | {body.applicant_name or ''}"
+    footer = f"{body.applicant_name or ''} | {body.interview_date or 'TBD'} | {body.job_title or ''}"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_paths: list[tuple[str, str]] = []
-        for name, doc in present.items():
-            md_path = os.path.join(tmpdir, f"{name}_slides.md")
-            pdf_path = os.path.join(tmpdir, f"{name}_slides.pdf")
-
-            marp_content = (
-                f"---\nmarp: true\ntheme: default\npaginate: true\n"
-                f"header: '{name} | {header}'\nfooter: '{footer}'\n"
-                f"style: |\n"
-                + "\n".join(f"  {line}" for line in MARP_THEME_CSS.strip().splitlines())
-                + f"\n---\n\n{doc.markdown}"
-            )
-
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(marp_content)
-
-            # Get the path to marp CLI in webapp's node_modules
-            webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
-            marp_cli = os.path.join(webapp_dir, "node_modules", ".bin", "marp")
-
-            result = subprocess.run(
-                [marp_cli, "--pdf", "--allow-local-files", md_path, "-o", pdf_path],
-                capture_output=True, text=True, timeout=120, cwd=webapp_dir,
-            )
-            if result.returncode != 0:
-                return err(f"PDF generation failed for {name}: {result.stderr[:500]}", status=500, request_id=rid)
-            pdf_paths.append((f"{name}_slides.pdf", pdf_path))
-
+    try:
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for arcname, fpath in pdf_paths:
-                zf.write(fpath, arcname)
+            for name, doc in present.items():
+                pdf_bytes = _markdown_to_pdf_bytes(name, doc.markdown, header, footer)
+                zf.writestr(f"{name}.pdf", pdf_bytes)
         buf.seek(0)
 
         return StreamingResponse(
             buf,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f'attachment; filename="interview_materials_{body.company_name}.zip"',
+                "Content-Disposition": f'attachment; filename="interview_materials.zip"',
                 "X-Request-Id": rid,
             },
         )
+    except Exception as e:
+        return err(f"PDF generation failed: {type(e).__name__}: {str(e)[:300]}", status=500, request_id=rid)
 
 
 # ---------------------------------------------------------------------------
