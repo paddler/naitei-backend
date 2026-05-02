@@ -26,6 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+from docx import Document as DocxDocument
+from PyPDF2 import PdfReader
 
 # Load environment variables from .env file
 load_dotenv(dotenv_path="/Users/nabehiro/Desktop/Next_Career 2/.env")
@@ -362,6 +364,38 @@ def validate_upload(content: bytes, content_type: str) -> None:
     expected = MAGIC_BYTES.get(content_type)
     if expected and not content[: len(expected)] == expected:
         raise HTTPException(422, "File signature does not match declared MIME type")
+
+
+# ---------------------------------------------------------------------------
+# File Text Extraction
+# ---------------------------------------------------------------------------
+
+def extract_text_from_file(content: bytes, content_type: str) -> str:
+    """Extract text from DOCX, PDF, or plain text files."""
+    try:
+        if content_type in ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/x-docx"):
+            # Extract text from DOCX
+            doc = DocxDocument(BytesIO(content))
+            text = "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+            # Also extract table content
+            for table in doc.tables:
+                for row in table.rows:
+                    text += "\n" + " | ".join(cell.text for cell in row.cells)
+            return text.strip()
+        elif content_type in ("application/pdf", "text/plain"):
+            # Extract text from PDF
+            if content_type == "application/pdf":
+                pdf_reader = PdfReader(BytesIO(content))
+                text = "\n".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
+            else:
+                # Plain text
+                text = content.decode("utf-8", errors="replace")
+            return text.strip()
+        else:
+            # Default: try to decode as text
+            return content.decode("utf-8", errors="replace").strip()
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from file: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -768,13 +802,32 @@ async def extract(request: Request, file: UploadFile):
     rid = request.state.request_id
     content = await file.read()
     validate_upload(content, file.content_type or "application/octet-stream")
+
+    # Extract text from file (DOCX, PDF, or plain text)
+    try:
+        file_text = extract_text_from_file(content, file.content_type or "text/plain")
+    except ValueError as e:
+        return err(f"File extraction failed: {str(e)}", status=422, request_id=rid)
+
+    if not file_text:
+        return err("Uploaded file appears to be empty", status=422, request_id=rid)
+
     provider = get_provider()
     model = MODEL_MAP.get(provider.name, {}).get(TaskKind.EXTRACT_RESUME, "")
-    result = await provider.generate_from_image(
-        content, file.content_type or "application/pdf",
-        "Extract applicant profile from this document. Return JSON with: name, age, careerHistory (array of {company, periodFrom, periodTo, role, achievements}), qualifications, selfPr.",
-        model=model,
-    )
+
+    # Use generate_text() with extracted file content
+    prompt = f"""Extract applicant profile from the following document content.
+Return ONLY a JSON object (no markdown, no code blocks) with these exact fields:
+- name (string, required)
+- age (number or null)
+- careerHistory (array of objects with: company, periodFrom, periodTo, role, achievements)
+- qualifications (array of strings or null)
+- selfPr (string or null)
+
+Document content:
+{file_text[:4000]}"""  # Limit to 4000 chars to avoid token overrun
+
+    result = await provider.generate_text(prompt, model=model)
 
     # Parse LLM output as JSON and validate structure
     llm_text = result["text"].strip()
@@ -798,8 +851,26 @@ async def extract(request: Request, file: UploadFile):
     except Exception as e:
         return err(f"Failed to validate extracted data: {str(e)}", status=422, request_id=rid)
 
-    # Return success with applicant profile in expected structure
-    return ok({"applicant": applicant_data.model_dump(by_alias=True)}, request_id=rid, provider=provider.name, model=model)
+    # Determine extraction method based on file type
+    content_type = file.content_type or "text/plain"
+    if "pdf" in content_type.lower():
+        extraction_method = "pdf-text"
+    elif "wordprocessingml" in content_type.lower() or "docx" in content_type.lower():
+        extraction_method = "docx-text"
+    else:
+        extraction_method = "text"
+
+    # Return success with complete ExtractResponse structure
+    return ok({
+        "applicant": applicant_data.model_dump(by_alias=True),
+        "sources": [{
+            "fileName": file.filename or "uploaded-file",
+            "mimeType": content_type,
+            "pageCount": 1,
+            "extractionMethod": extraction_method
+        }],
+        "warnings": []
+    }, request_id=rid, provider=provider.name, model=model)
 
 
 @app.post("/api/review")
