@@ -1124,6 +1124,19 @@ async def generate_pdf(body: PdfRequest, request: Request):
     footer = f"{body.applicant_name or ''} | {body.interview_date or 'TBD'} | {body.job_title or ''}"
 
     try:
+        # 1ファイルの場合はPDFを直接返す。複数の場合はZIPにまとめる
+        if len(present) == 1:
+            name, doc = next(iter(present.items()))
+            pdf_bytes = _markdown_to_pdf_bytes(name, doc.markdown, header, footer)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{name}.pdf"',
+                    "X-Request-Id": rid,
+                },
+            )
+
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for name, doc in present.items():
