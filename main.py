@@ -430,15 +430,15 @@ class TaskKind(str, Enum):
 
 MODEL_MAP: dict[str, dict[TaskKind, str]] = {
     "claude": {
-        TaskKind.EXTRACT_JOB: "claude-3-5-haiku-20241022",
-        TaskKind.EXTRACT_RESUME: "claude-3-5-haiku-20241022",
-        TaskKind.REVIEW: "claude-3-5-haiku-20241022",
-        TaskKind.GEN_QA: "claude-3-5-haiku-20241022",
-        TaskKind.GEN_PR: "claude-3-5-haiku-20241022",
-        TaskKind.GEN_QUESTIONS: "claude-3-5-haiku-20241022",
-        TaskKind.GEN_CHECKLIST: "claude-3-5-haiku-20241022",
-        TaskKind.COMPANY_RESEARCH: "claude-3-5-haiku-20241022",
-        TaskKind.CHAT: "claude-3-5-haiku-20241022",
+        TaskKind.EXTRACT_JOB: "claude-3-haiku-20240307",
+        TaskKind.EXTRACT_RESUME: "claude-3-haiku-20240307",
+        TaskKind.REVIEW: "claude-3-haiku-20240307",
+        TaskKind.GEN_QA: "claude-3-haiku-20240307",
+        TaskKind.GEN_PR: "claude-3-haiku-20240307",
+        TaskKind.GEN_QUESTIONS: "claude-3-haiku-20240307",
+        TaskKind.GEN_CHECKLIST: "claude-3-haiku-20240307",
+        TaskKind.COMPANY_RESEARCH: "claude-3-haiku-20240307",
+        TaskKind.CHAT: "claude-3-haiku-20240307",
     },
     "openai": {k: "gpt-4o" for k in TaskKind},
     "gemini": {k: "gemini-2.5-flash" for k in TaskKind},
@@ -464,7 +464,7 @@ class AIProvider(ABC):
 class ClaudeProvider(AIProvider):
     name = "claude"
 
-    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> dict:
+    async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-3-haiku-20240307", **kw: Any) -> dict:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
 
@@ -498,7 +498,7 @@ class ClaudeProvider(AIProvider):
         finally:
             await http_client.aclose()
 
-    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> AsyncIterator[dict]:
+    async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-3-haiku-20240307", **kw: Any) -> AsyncIterator[dict]:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
 
@@ -552,7 +552,7 @@ class ClaudeProvider(AIProvider):
         finally:
             await http_client.aclose()
 
-    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-3-5-sonnet-20241022", **kw: Any) -> dict:
+    async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-3-haiku-20240307", **kw: Any) -> dict:
         # Adjust max_tokens based on model
         max_tokens = 2048 if "haiku" in model else 4096
         http_client = httpx.AsyncClient(timeout=120)
