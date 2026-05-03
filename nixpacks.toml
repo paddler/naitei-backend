@@ -1,2 +1,2 @@
 [phases.setup]
-nixPkgs = ["noto-fonts-cjk-serif"]
+nixPkgs = ["noto-fonts-cjk-sans"]
