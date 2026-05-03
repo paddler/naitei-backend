@@ -20,6 +20,61 @@ from typing import Any, AsyncIterator, Generic, Optional, TypeVar
 
 import urllib.request
 import httpx
+
+# ── Japanese font for PDF generation ──────────────────────────────────────────
+# Pre-register at module load so every PDF call reuses the same font object.
+_JP_FONT_NAME: str = "Helvetica"  # default (ASCII-only fallback)
+_JP_FONT_BOLD: str = "Helvetica-Bold"
+
+def _init_jp_font() -> None:
+    """Try to register a CJK-capable font; silently fall back to Helvetica."""
+    global _JP_FONT_NAME, _JP_FONT_BOLD
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        # 1. CID built-in (always available in the reportlab package)
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+            _JP_FONT_NAME = "HeiseiKakuGo-W5"
+            _JP_FONT_BOLD = "HeiseiKakuGo-W5"
+            return
+        except Exception:
+            pass
+
+        # 2. System / cached TTF
+        _cache = "/tmp/NotoSansJP-Regular.ttf"
+        candidates = [
+            _cache,
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    pdfmetrics.registerFont(TTFont("NotoSansJP", path))
+                    _JP_FONT_NAME = "NotoSansJP"
+                    _JP_FONT_BOLD = "NotoSansJP"
+                    return
+                except Exception:
+                    pass
+
+        # 3. Download NotoSansJP static TTF from GitHub
+        url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Regular.ttf"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        with open(_cache, "wb") as fh:
+            fh.write(data)
+        pdfmetrics.registerFont(TTFont("NotoSansJP", _cache))
+        _JP_FONT_NAME = "NotoSansJP"
+        _JP_FONT_BOLD = "NotoSansJP"
+    except Exception:
+        pass  # Helvetica fallback remains
+
+_init_jp_font()
+# ──────────────────────────────────────────────────────────────────────────────
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
@@ -1015,69 +1070,10 @@ def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: 
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
 
-    # Japanese font registration
-    # Priority: cached /tmp font → system TTF → auto-download NotoSansJP → Helvetica fallback
-    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-
-    # Multiple CDN URLs to try (static weight TTF, not variable font)
-    _FONT_CACHE = "/tmp/NotoSansJP-Regular.ttf"
-    _FONT_URLS = [
-        "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Regular.ttf",
-        "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-jp@5.0.15/files/noto-sans-jp-japanese-400-normal.woff2",
-    ]
-
-    font_name = None
-    bold_font = None
-
-    # 1. Try cached / system Japanese TTF fonts
-    candidate_fonts = [
-        (_FONT_CACHE, "NotoSansJP"),
-        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
-        ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "NotoSans"),
-        ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "HiraKaku"),
-    ]
-    for font_path, name in candidate_fonts:
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont(name, font_path))
-                font_name = name
-                bold_font = name
-                break
-            except Exception:
-                pass
-
-    # 2. Try CID built-in font (no external file needed, always available in reportlab)
-    if font_name is None:
-        try:
-            pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
-            font_name = "HeiseiKakuGo-W5"
-            bold_font = "HeiseiKakuGo-W5"
-        except Exception:
-            pass
-
-    # 3. Auto-download NotoSansJP static TTF (cached in /tmp for subsequent calls)
-    if font_name is None:
-        for url in _FONT_URLS:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = resp.read()
-                with open(_FONT_CACHE, "wb") as fh:
-                    fh.write(data)
-                pdfmetrics.registerFont(TTFont("NotoSansJP", _FONT_CACHE))
-                font_name = "NotoSansJP"
-                bold_font = "NotoSansJP"
-                break
-            except Exception:
-                pass
-
-    # 4. Last resort: ASCII only (Japanese will be replaced with '?')
-    if font_name is None:
-        font_name = "Helvetica"
-        bold_font = "Helvetica-Bold"
+    # Use globally pre-registered font (set at module startup by _init_jp_font)
+    font_name = _JP_FONT_NAME
+    bold_font = _JP_FONT_BOLD
 
     buf = BytesIO()
     doc = SimpleDocTemplate(
