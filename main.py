@@ -60,16 +60,26 @@ def _init_jp_font() -> None:
                 except Exception:
                     pass
 
-        # 3. Download NotoSansJP static TTF from GitHub
-        url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Regular.ttf"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
-        with open(_cache, "wb") as fh:
-            fh.write(data)
-        pdfmetrics.registerFont(TTFont("NotoSansJP", _cache))
-        _JP_FONT_NAME = "NotoSansJP"
-        _JP_FONT_BOLD = "NotoSansJP"
+        # 3. Download NotoSansJP in a background thread (non-blocking)
+        # This avoids blocking server startup on Railway
+        import threading
+        def _download_font():
+            global _JP_FONT_NAME, _JP_FONT_BOLD
+            try:
+                url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/static/NotoSansJP-Regular.ttf"
+                req2 = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req2, timeout=20) as resp:
+                    data = resp.read()
+                with open(_cache, "wb") as fh:
+                    fh.write(data)
+                from reportlab.pdfbase import pdfmetrics as _pm
+                from reportlab.pdfbase.ttfonts import TTFont as _TTF
+                _pm.registerFont(_TTF("NotoSansJP", _cache))
+                _JP_FONT_NAME = "NotoSansJP"
+                _JP_FONT_BOLD = "NotoSansJP"
+            except Exception:
+                pass
+        threading.Thread(target=_download_font, daemon=True).start()
     except Exception:
         pass  # Helvetica fallback remains
 
