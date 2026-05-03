@@ -838,7 +838,7 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "jp_font": _JP_FONT_NAME}
 
 
 @app.post("/api/scrape")
