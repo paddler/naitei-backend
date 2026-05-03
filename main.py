@@ -1223,3 +1223,4 @@ async def generate_pdf(body: PdfRequest, request: Request):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+# Railway rebuild trigger: 2026-05-03 03:07:53 UTC
