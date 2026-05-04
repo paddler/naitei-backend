@@ -4,6 +4,206 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 📈 プロジェクト進捗状況（2026/5/3 時点）
+
+### ✅ 完了した作業
+
+| タスク | 状態 | 備考 |
+|---|---|---|
+| バックエンド（main.py） | ✅ 完了 | FastAPI 35KB、全37テスト パス |
+| 設計フェーズ全体 | ✅ 完了 | PRD / システム設計 / API設計 / UI設計 / AI連携設計 |
+| フロントエンド実装 | ✅ 完了 | Next.js 14 App Router、5ステップウィザード完成 |
+| 単体テスト・統合テスト | ✅ 完了 | Vitest、テストカバレッジ 80%+ |
+| E2E テストフレームワーク | ✅ 完了 | Playwright golden-path test 実装 |
+| GitHub Actions CI/CD | ✅ 完了 | ✅ 2026/5/3 修正：`working-directory: webapp` 削除済み |
+
+### 🔄 進行中・検証待ち
+
+| タスク | 状態 | 次ステップ |
+|---|---|---|
+| **E2E テスト 24 個失敗** | ✅ **解決済み** | 全30テスト合格（2026/5/4 11:30） |
+| GitHub Actions ワークフロー検証 | 🔄 進行中 | unit-test → e2e-test → deploy ジョブの実行確認 |
+| Vercel デプロイ | ⚠️ 検証待ち | 404 DEPLOYMENT_NOT_FOUND エラーの原因調査・解決 |
+| バックエンド接続確認 | ⚠️ 検証待ち | フロント → Railway バックエンド通信テスト |
+| 本番環境 E2E フロー | ⚠️ 検証待ち | Step1 → Step4 → PDF 出力の全体フロー検証 |
+
+### 【詳細】E2E テスト 24 個失敗の根本原因診断フレームワーク（2026/5/4）
+
+## 【解決】実際の根本原因と修正（2026/5/4 完了）
+
+**根本原因**: ビルドプロセスが実行されていなかった
+
+**修正手順**:
+1. `npm run build` を実行 → Tailwind CSS クラス生成が発動
+2. `npm run test:e2e` を実行 → 全30テスト合格
+
+**解説**:
+- Tailwind CSS クラスは `npm run dev` 時には On-Demand で生成される（ホットリロード対応）
+- 本番環境では `npm run build` で静的なクラスファイルを生成する必要
+- E2E テストは本番ビルド（`npm run build`）後の状態をテストするため、ビルドプロセスが必須
+- 前セッションでは設定ファイルの検証に集中していたが、実は配置は完全に正常だった
+- **学び**: 次回以降は「コードは正しいのか？」ではなく「プロセスは実行されているか？」を優先的に確認すべき
+
+## 【最新判定】2026/5/4 診断フェーズ2完了
+
+### 4仮説の検証結果
+
+| # | 仮説 | 検証対象 | 結果 | 根拠 |
+|---|---|---|---|---|
+| ① | useReducedMotion SSR互換性 | `hooks/useReducedMotion.ts` | ✅ NOT | 'use client' 指定、useEffect 内で window アクセス |
+| ② | STEPS const as const | `types/wizard.ts` | ✅ NOT | as const アサーション正常、型推論チェーン正常 |
+| ③ | CSS変数未定義 | `app/globals.css` | ✅ 修正 | 変数は定義済み、但しビルドプロセス検証が必要 |
+| ④ | AppHeader Props未処理 | `components/layout/AppHeader.tsx` | ✅ NOT | Props型定義・値渡し正常 |
+
+### 新仮説：Tailwind 設定 / ビルドプロセス
+
+根本原因は以下のいずれかの可能性：
+1. `tailwind.config.ts` の `content` パスが Next.js App Router に対応していない
+2. CSS 変数がビルド時にストリップされている
+3. Tailwind が CSS 変数参照を正しく変換していない
+
+### 次セッション即座アクション
+
+```bash
+# 1. tailwind.config.ts を確認
+cat webapp/tailwind.config.ts | grep -A 10 "content:"
+
+# 2. 本番ビルド
+cd webapp && npm run build
+
+# 3. E2E テスト再実行
+npm run test:e2e
+
+# 4. ブラウザで手動確認
+npm run dev
+# http://localhost:3000/step1 で h1 要素が DOM に存在するか確認
+
+
+## 全体サマリ
+
+**診断状況**
+- 4つの初期仮説すべてを検証完了
+- 3つは明確に根本原因を除外
+- 1つ（CSS 変数）は変数定義自体は正常であることを確認
+- ただし 24 E2E テスト失敗の根本原因は依然未特定
+
+**判明した事実**
+- ソースコードレベルでの実装エラーはなし
+- CSS 変数は `app/globals.css` に正しく定義されている
+- 相対パス解決（`app/layout.tsx` → `./globals.css` → `app/globals.css`）は正常
+- useReducedMotion, STEPS const, AppHeader Props はすべて正常実装
+
+**次のステップへの移行条件**
+ビルドプロセスおよび Tailwind CSS 設定の検証が必須。本番ビルド（`npm run build`）と E2E テスト再実行（`npm run test:e2e`）で、エラーパターンまたは成功状況を確認することで、根本原因の特定が進展する。
+
+
+### 🏗️ 最新の修正履歴
+
+**GitHub Actions CI/CD 修正（2026/5/3）**
+- **問題**：e2e-test ジョブが `working-directory: webapp` の指定で npm パッケージを見つけられない
+- **原因**：GitHub Actions リポジトリ checkout 時に webapp ディレクトリがルートになっており、ネストされたパスが存在しない
+- **解決**：`.github/workflows/ci.yml` の以下を修正
+  - e2e-test ジョブ内の `working-directory: webapp` 4ヶ所を削除
+  - artifact path を `path: webapp/playwright-report/` → `path: playwright-report/` に修正
+- **ステータス**：コミット済み & リモートプッシュ完了
+
+---
+
+## 🎯 今後の検証予定
+
+### Phase 1: CI/CD パイプライン検証（本週中）
+```
+実行: unit-test ジョブ
+  → npm ci / tsc --noEmit / lint / test / build 成功確認
+  ↓
+実行: e2e-test ジョブ（unit-test 成功後）
+  → Playwright browser install / build / e2e test 実行
+  ↓
+確認: Playwright Report アーティファクト生成
+  ↓
+実行: deploy ジョブ（両テスト成功後）
+  → Vercel デプロイ開始
+```
+
+### Phase 2: Vercel デプロイ検証
+- Vercel Dashboard でデプロイ状態確認（DEPLOYMENT_NOT_FOUND 原因調査）
+- 環境変数確認：`NEXT_PUBLIC_API_URL` が正しく設定されているか
+- ビルドログ確認：`Settings → Deployments` でエラーの有無
+
+### Phase 3: 本番接続テスト
+- バックエンド ヘルスチェック：`curl https://naitei-backend-production.up.railway.app/api/health`
+- フロント → バック通信テスト：ステップ1 募集要項入力で /api/extract 呼び出し
+- ストリーミング API テスト：ステップ4 面接対策で /api/interview/chat 呼び出し
+
+### Phase 4: 完全フロー検証
+- Step1 → Step2 → Step3 → Step4 → Done（PDF ダウンロード）の全フロー実行
+- 各ステップでのエラーハンドリング動作確認
+- E2E テスト `npm run test:e2e` が CI で成功することを確認
+
+---
+
+## 📐 コーディング規約・確定事項
+
+### TypeScript / 型安全性
+- **必須**: すべてのモジュール export は型定義付き
+- **型定義の一元化**: `types/` ディレクトリに集約
+  - `types/applicant.ts` — 応募者・求人・入力データ
+  - `types/api.ts` — API リクエスト・レスポンス
+  - `types/ai.ts` — AI モデル・ストリーミング型
+- **import path**: 相対パスではなく `@/types`, `@/lib`, `@/components` 推奨
+- **never use `any`**: `unknown` で受け取り、型ガード関数で narrowing
+
+### React / コンポーネント設計
+- **原則**: 機能単位のディレクトリ構成（ファイル種別ではなく）
+- **小ぶり**: 1コンポーネント 200-400 行以下
+- **Props 型定義**: インライン interface は避け、`types/` に集約
+- **Hooks**: `useState` / `useCallback` / `useEffect` の使用は最小限
+  - サーバー状態は **TanStack Query** で管理
+  - クライアント状態は **Zustand** で管理
+  - フォーム状態は **React Hook Form** で管理
+- **memo 使用**: 不要な再レンダリング防止（`React.memo` 推奨）
+
+### API / バックエンド連携
+- **型安全**: すべての fetch は `Response.json() as <型>` で型チェック
+- **エラーハンドリ**: 明示的な try-catch + ユーザー向けメッセージ表示
+- **ストリーミング**: Vercel AI SDK の `streamText()` で実装
+  - `toDataStreamResponse()` で Next.js との連携
+  - フロント側は `useChat()` hook で受信
+
+### テスト（80%+ 必須）
+- **テスト先行**: RED → GREEN → REFACTOR の順序
+- **単体テスト**（Vitest）: ロジック・util 関数・Hook
+- **統合テスト**（Vitest）: API Routes / データフロー
+- **E2E テスト**（Playwright）: ユーザー完全フロー（golden-path）
+- **カバレッジ**: `npm run test --coverage` で 80% 以上を確認
+- **テストファイル配置**:
+  - コンポーネント: `components/__tests__/Component.test.tsx`
+  - ロジック: `lib/__tests__/util.test.ts`
+  - E2E: `e2e/golden-path.spec.ts`
+
+### Git / コミット
+- **コミットメッセージ**: 従来型（feat:, fix:, refactor:, test:, docs: など）
+- **原則**: 1機能 = 1コミット
+- **PR**: main へのマージ前に必ず `npm run test` で テスト全パス確認
+
+### デプロイ前チェックリスト
+- [ ] `npm run build` が成功（本番ビルド検証）
+- [ ] `npm run test` で テストカバレッジ 80%+
+- [ ] `npm run lint` で ESLint エラーなし
+- [ ] 環境変数が `.env.example` に記載されているか
+- [ ] GitHub Actions CI が全ステージ通過しているか
+- [ ] Vercel デプロイが成功しているか（Preview URL 確認）
+
+### CI/CD パイプライン設定
+- **GitHub Actions ワークフロー**: `.github/workflows/ci.yml`
+  - unit-test: Node 20, npm ci, type check, lint, test, build
+  - e2e-test: Playwright browser install, build, run tests, artifact upload (failure時)
+  - deploy: Vercel deployment (main branch push のみ)
+- **注意**: 各 Job の `working-directory` は明示しない（リポジトリルートを使用）
+- **Artifact**: Playwright report は 7 日保持
+
+---
+
 ## 🚀 クイックスタート（開発者向け）
 
 ### よく使うコマンド
