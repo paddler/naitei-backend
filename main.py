@@ -1622,172 +1622,153 @@ async def generate_pdf(body: PdfRequest, request: Request):
         return err(f"PDF generation failed: {type(e).__name__}: {str(e)[:300]}\nTraceback:\n{tb[-800:]}", status=500, request_id=rid)
 
 
-# --- /api/interview/pdf  (WeasyPrint スライドPDF生成) ---
-
-_MARP_CSS = """
-@page {
-  size: 960px 540px;
-  margin: 0;
-}
-* { box-sizing: border-box; }
-body { margin: 0; padding: 0; }
-.slide-page {
-  font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Meiryo', 'Noto Sans JP', sans-serif;
-  padding: 32px 46px;
-  font-size: 16px;
-  line-height: 1.5;
-  width: 960px;
-  height: 540px;
-  overflow: hidden;
-  position: relative;
-  background: #ffffff;
-  color: #1f2937;
-  page-break-after: always;
-}
-.slide-page:last-child { page-break-after: auto; }
-.slide-page.title {
-  background: linear-gradient(135deg, #0b1e4d 0%, #1e40af 60%, #3b82f6 100%);
-  color: #ffffff;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-}
-.slide-page.title h1 { font-size: 54px; color: #ffffff; border: none; margin-bottom: 16px; }
-.slide-page.title h2 { font-size: 24px; color: #bfdbfe; font-weight: normal; border: none; }
-.slide-page.title p  { font-size: 20px; color: #dbeafe; margin-top: 20px; }
-.slide-page.core {
-  background: #0b1e4d;
-  color: #ffffff;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-}
-.slide-page.core h1 { color: #fef3c7; border: none; font-size: 30px; }
-.slide-page.core .bigbox {
-  background: #1e3a8a;
-  border: 3px solid #fbbf24;
-  border-radius: 18px;
-  padding: 36px 52px;
-  margin-top: 24px;
-  font-size: 34px;
-  font-weight: bold;
-  color: #fef3c7;
-  max-width: 860px;
-  line-height: 1.4;
-}
-.slide-page.hero {
-  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
-  color: #ffffff;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 32px 46px;
-}
-.slide-page.hero h1 { color: #fef3c7; border: none; font-size: 28px; }
-.slide-page.hero h2 { color: #bfdbfe; font-size: 20px; border: none; border-left: 4px solid #fbbf24; padding-left: 12px; margin-top: 12px; }
-.slide-page.hero blockquote { background: rgba(255,255,255,0.1); border-left: 4px solid #fbbf24; color: #f1f5f9; }
-.slide-page.hero .star-box { background: rgba(251,191,36,0.2); border: 2px solid #fbbf24; border-radius: 10px; padding: 12px 20px; margin: 8px 0; color: #fef3c7; }
-.slide-page.mantra {
-  background: #0b1e4d;
-  color: #ffffff;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-}
-.slide-page.mantra h1 { color: #fef3c7; border: none; font-size: 26px; }
-.slide-page.mantra .mantra-box {
-  background: #1e3a8a;
-  border: 2px solid #fbbf24;
-  border-radius: 14px;
-  padding: 28px 40px;
-  margin-top: 20px;
-  font-size: 18px;
-  color: #f1f5f9;
-  line-height: 2.2;
-  text-align: left;
-  max-width: 860px;
-}
-.slide-page h1 { color: #0b1e4d; border-bottom: 3px solid #3b82f6; padding-bottom: 6px; font-size: 22px; margin-bottom: 10px; margin-top: 0; }
-.slide-page h2 { color: #1e40af; font-size: 18px; border-left: 5px solid #3b82f6; padding-left: 12px; margin-top: 12px; margin-bottom: 4px; }
-.slide-page h3 { color: #1e3a8a; font-size: 15px; margin-top: 10px; margin-bottom: 3px; }
-.slide-page strong { color: #b91c1c; font-weight: 700; }
-.slide-page blockquote { border-left: 5px solid #3b82f6; background: #eff6ff; padding: 10px 16px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.65; color: #1f2937; }
-.slide-page table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 14px; }
-.slide-page th { background: #1e40af; color: #ffffff; padding: 7px 10px; border: 1px solid #1e3a8a; text-align: center; }
-.slide-page td { padding: 7px 10px; border: 1px solid #cbd5e1; background: #ffffff; }
-.slide-page tr:nth-child(even) td { background: #f1f5f9; }
-.slide-page ul, .slide-page ol { font-size: 15px; line-height: 1.7; margin: 4px 0; padding-left: 1.5em; }
-.slide-page li { margin-bottom: 3px; }
-.slide-page p { margin: 6px 0; font-size: 15px; }
-.slide-page .tip { background: #fef3c7; border-left: 5px solid #f59e0b; padding: 7px 14px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 13px; color: #7c2d12; }
-.slide-page .recommend { background: #ecfdf5; border: 2px solid #10b981; padding: 10px 18px; margin: 8px 0; border-radius: 10px; font-size: 14px; }
-.slide-page .ng { background: #fef2f2; border-left: 5px solid #dc2626; padding: 10px 16px; margin: 8px 0; border-radius: 0 8px 8px 0; color: #7f1d1d; font-size: 14px; }
-.slide-page .ok { background: #ecfdf5; border-left: 5px solid #10b981; padding: 7px 14px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 13px; color: #065f46; }
-.slide-page .magnet { background: #fffbeb; border: 3px dashed #f59e0b; padding: 18px 24px; margin: 12px 0; border-radius: 12px; font-size: 18px; color: #78350f; line-height: 2; }
-.slide-page .q-card { background: #f8faff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 18px; margin: 8px 0; font-size: 14px; }
-.slide-page .q-card h3 { color: #1e40af; margin-top: 0; }
-.slide-page .star-row { background: #fffbeb; border: 2px solid #f59e0b; border-radius: 8px; padding: 10px 16px; margin: 6px 0; font-size: 14px; color: #78350f; }
-.slide-page .flow { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: 12px 20px; margin: 8px 0; font-size: 14px; line-height: 1.9; }
-.slide-page .sep { border: none; border-top: 2px dashed #93c5fd; margin: 10px 0; }
-.slide-page .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-"""
-
-
-def _marp_md_to_slides_html(markdown_text: str) -> list[tuple[str, str]]:
-    """Split Marp markdown by --- and return list of (slide_class, html) tuples."""
-    import re
-    import markdown2  # type: ignore[import]
-
-    parts = re.split(r'(?:^|\n)---(?:\n|$)', markdown_text)
-    slides: list[tuple[str, str]] = []
-    for part in parts:
-        class_match = re.search(r'<!--\s*_class:\s*(\S+)\s*-->', part)
-        slide_class = class_match.group(1) if class_match else ""
-        # Strip Marp-specific comments
-        cleaned = re.sub(r'<!--[^>]*-->', '', part).strip()
-        if not cleaned:
-            continue
-        html = markdown2.markdown(
-            cleaned,
-            extras=["fenced-code-blocks", "tables", "break-on-newline", "strike", "task_list"],
-        )
-        slides.append((slide_class, html))
-    return slides
+# --- /api/interview/pdf ---
 
 
 def _slides_to_pdf_bytes(title: str, markdown_text: str) -> bytes:
-    """Convert Marp-format markdown to PDF using WeasyPrint."""
-    from weasyprint import HTML, CSS  # type: ignore[import]
+    """Convert Marp-format markdown to PDF using reportlab (pure Python, no system deps)."""
+    import io
+    import re
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.lib.colors import HexColor, white
 
-    slides = _marp_md_to_slides_html(markdown_text)
-    if not slides:
-        slides = [("", f"<p>{title}</p>")]
+    # Japanese CID fonts — referenced by name, no font file needed
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont('HeiseiKakuGo-W5'))
+        pdfmetrics.registerFont(UnicodeCIDFont('HeiseiMin-W3'))
+        BOLD, NORMAL = 'HeiseiKakuGo-W5', 'HeiseiMin-W3'
+    except Exception:
+        BOLD, NORMAL = 'Helvetica-Bold', 'Helvetica'
 
-    sections = "\n".join(
-        f'<section class="slide-page {sc}">{html}</section>'
-        for sc, html in slides
-    )
+    # 16:9 page: 960×540 px = 720×405 pt (72dpi)
+    PAGE_W, PAGE_H = 720.0, 405.0
+    MARGIN = 36.0
 
-    full_html = f"""<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-</head>
-<body>
-{sections}
-</body>
-</html>"""
+    C_NAVY  = HexColor('#0b1e4d')
+    C_BLUE  = HexColor('#1e40af')
+    C_LBLUE = HexColor('#3b82f6')
+    C_AMBER = HexColor('#fbbf24')
+    C_TEXT  = HexColor('#1f2937')
+    C_MUTED = HexColor('#94a3b8')
 
-    pdf_bytes = HTML(string=full_html).write_pdf(
-        stylesheets=[CSS(string=_MARP_CSS)]
-    )
-    return pdf_bytes
+    parts = re.split(r'(?:^|\n)---(?:\n|$)', markdown_text)
+    buf = io.BytesIO()
+    c = Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+    slide_num = 0
+
+    for part in parts:
+        cleaned = part.strip()
+        if not cleaned:
+            continue
+
+        # Slide class
+        cls_m = re.search(r'<!--\s*_class:\s*(\S+)\s*-->', cleaned)
+        slide_class = cls_m.group(1) if cls_m else ''
+        is_dark = slide_class in ('title', 'core', 'hero', 'mantra')
+
+        # Extract H1/H2 heading
+        h_m = re.search(r'^#{1,2}\s+(.+)$', cleaned, re.MULTILINE)
+        heading = h_m.group(1).strip() if h_m else ''
+
+        # Strip all markdown / HTML to plain text
+        text = re.sub(r'<!--[^>]*-->', '', cleaned)
+        text = re.sub(r'<[^>]+>', '\n', text)
+        for esc, ch in (('&lt;', '<'), ('&gt;', '>'), ('&amp;', '&'), ('&nbsp;', ' ')):
+            text = text.replace(esc, ch)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\*{1,2}([^*\n]+)\*{1,2}', r'\1', text)
+        text = re.sub(r'`([^`\n]+)`', r'\1', text)
+        text = re.sub(r'^\s*[-*>|]\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^\s*\[[ x]\]\s*', '□ ', text, flags=re.MULTILINE)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        body_lines = [l.strip() for l in text.split('\n')
+                      if l.strip() and l.strip() != heading]
+
+        # ── Background ──────────────────────────────────────────────
+        c.setFillColor(C_NAVY if is_dark else white)
+        c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+
+        if not is_dark:
+            c.setFillColor(C_LBLUE)
+            c.rect(0, PAGE_H - 4, PAGE_W, 4, fill=1, stroke=0)
+        elif slide_class == 'mantra':
+            c.setFillColor(C_AMBER)
+            c.rect(0, 0, PAGE_W, 4, fill=1, stroke=0)
+
+        # ── Title slide (centered) ───────────────────────────────────
+        if slide_class == 'title':
+            y = PAGE_H * 0.62
+            c.setFillColor(white)
+            c.setFont(BOLD, 24)
+            if heading:
+                txt = heading[:38]
+                w = c.stringWidth(txt, BOLD, 24)
+                c.drawString((PAGE_W - min(w, PAGE_W - 2 * MARGIN)) / 2, y, txt)
+                y -= 38
+            c.setFont(NORMAL, 13)
+            for line in body_lines[:5]:
+                txt = line[:45]
+                w = c.stringWidth(txt, NORMAL, 13)
+                c.drawString((PAGE_W - min(w, PAGE_W - 2 * MARGIN)) / 2, y, txt)
+                y -= 22
+
+        # ── Standard slide ───────────────────────────────────────────
+        else:
+            y = PAGE_H - MARGIN - 2
+
+            if heading:
+                c.setFillColor(C_AMBER if is_dark else C_BLUE)
+                c.setFont(BOLD, 16)
+                c.drawString(MARGIN, y, heading[:52])
+                y -= 24
+                if not is_dark:
+                    c.setStrokeColor(C_LBLUE)
+                    c.setLineWidth(1.5)
+                    c.line(MARGIN, y + 4, PAGE_W - MARGIN, y + 4)
+                    y -= 8
+                else:
+                    y -= 4
+
+            max_line_w = PAGE_W - 2 * MARGIN - 12
+            c.setFont(NORMAL, 11)
+            for line in body_lines:
+                if y < MARGIN + 12:
+                    break
+                c.setFillColor(white if is_dark else C_TEXT)
+                while line:
+                    w = c.stringWidth(line, NORMAL, 11)
+                    if w <= max_line_w:
+                        c.drawString(MARGIN + 8, y, line)
+                        y -= 14
+                        break
+                    # split at estimated character position
+                    split = max(1, int(len(line) * max_line_w / w))
+                    c.drawString(MARGIN + 8, y, line[:split])
+                    line = line[split:]
+                    y -= 14
+                    if y < MARGIN + 12:
+                        break
+
+        # ── Page number ──────────────────────────────────────────────
+        slide_num += 1
+        c.setFillColor(C_MUTED)
+        c.setFont(NORMAL, 8)
+        c.drawRightString(PAGE_W - 8, 8, str(slide_num))
+        c.showPage()
+
+    if slide_num == 0:
+        # Fallback: empty PDF with title
+        c.setFillColor(white)
+        c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+        c.setFillColor(C_TEXT)
+        c.setFont(BOLD, 16)
+        c.drawCentredString(PAGE_W / 2, PAGE_H / 2, title)
+        c.showPage()
+
+    c.save()
+    return buf.getvalue()
 
 
 @app.post("/api/interview/pdf")
