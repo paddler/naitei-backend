@@ -1,7 +1,7 @@
 # Naitei.ai (NextCareer) - System Specification
 
-Version: 1.0
-Last Updated: 2026-05-05
+Version: 1.1
+Last Updated: 2026-05-07
 
 ---
 
@@ -49,6 +49,7 @@ Naitei.ai is a Japanese job application support web service that provides AI-pow
 - **API proxy pattern**: Frontend never calls the FastAPI backend directly. All requests go through Next.js API Routes to avoid CORS issues and centralize auth/headers.
 - **3-provider cascade**: AI requests attempt Claude first, then fall back to OpenAI, then Gemini.
 - **All pages are client components**: Every `page.tsx` uses `'use client'` directive.
+- **Password gate**: Site-wide access control via cookie-based authentication (`/gate` page + `middleware.ts`). No user account system; single shared password.
 
 ---
 
@@ -464,6 +465,7 @@ The backend applies PII masking to all SSE output using regex patterns:
 
 | Path | File | Description |
 |---|---|---|
+| `/gate` | `app/gate/page.tsx` | Password gate: form to enter site password, sets `naitei_auth` cookie |
 | `/` | `app/page.tsx` | Landing page: hero, 4-step explanation, 3 benefits, testimonials, FAQ accordion, CTA, footer |
 | `/step1` | `app/step1/page.tsx` | Job posting input (3 modes: URL/file/text) |
 | `/step2` | `app/step2/page.tsx` | Applicant profile (2 modes: file/manual) |
@@ -583,6 +585,35 @@ All CSS custom properties are mapped to Tailwind utility classes:
 
 ## 9. Security
 
+### 9.0 Password Gate (Site-wide Access Control)
+
+Access to the entire site is protected by a custom password gate implemented via Next.js Edge Middleware.
+
+**Flow:**
+```
+Request → middleware.ts
+  ├─ /gate, /api/auth → pass through (no auth required)
+  ├─ Cookie `naitei_auth` matches BASIC_AUTH_PASS → pass through
+  └─ Otherwise → redirect to /gate?from=<original-path>
+
+/gate (page) → POST /api/auth → set httpOnly cookie → redirect to original path
+```
+
+**Key files:**
+| File | Role |
+|---|---|
+| `webapp/middleware.ts` | Edge middleware: checks `naitei_auth` cookie on every request |
+| `webapp/app/gate/page.tsx` | Password form UI (dark theme, client component) |
+| `webapp/app/api/auth/route.ts` | POST endpoint: validates password, sets `naitei_auth` cookie |
+
+**Cookie spec:**
+- Name: `naitei_auth`
+- Value: matches `BASIC_AUTH_PASS` env var (default: `1616`)
+- Flags: `httpOnly`, `secure` (production), `sameSite=lax`, `maxAge=604800` (7 days)
+- Path: `/`
+
+**Environment variable:** `BASIC_AUTH_PASS` (Vercel env var)
+
 ### 9.1 CSP (Content Security Policy)
 
 Per-request nonce-based CSP header set via FastAPI middleware:
@@ -647,6 +678,7 @@ Each route file in `webapp/app/api/` proxies requests to the FastAPI backend:
 
 | Route File | Method | Backend Path | Type |
 |---|---|---|---|
+| `api/auth/route.ts` | POST | *(internal)* | Cookie auth (no backend call) |
 | `api/health/route.ts` | GET | `/api/health` | JSON |
 | `api/scrape/route.ts` | POST | `/api/scrape` | JSON |
 | `api/extract/route.ts` | POST | `/api/extract` | FormData -> JSON |
@@ -719,6 +751,7 @@ Applied as FastAPI middleware in order:
 |---|---|
 | `BACKEND_URL` | FastAPI backend URL (server-side, used by API routes) |
 | `NEXT_PUBLIC_BACKEND_URL` | Backend URL (client-side fallback, typically empty in production) |
+| `BASIC_AUTH_PASS` | Site-wide password for the password gate (default: `1616`) |
 
 ### 12.2 Backend (Railway)
 
@@ -812,22 +845,25 @@ Pipeline stages:
 
 ```
 Next_Career 2/
-├── main.py                          # FastAPI backend (1,227 lines)
+├── main.py                          # FastAPI backend
 ├── test_main.py                     # Backend tests
-├── requirements.txt                 # Python dependencies
+├── requirements.txt                 # Python dependencies (reportlab, no weasyprint)
 ├── CLAUDE.md                        # Project instructions
 ├── .github/workflows/ci.yml         # CI/CD pipeline
 ├── webapp/                          # Next.js frontend
+│   ├── middleware.ts                # Edge middleware: password gate (cookie check)
 │   ├── app/
 │   │   ├── layout.tsx               # Root layout (Noto Sans JP, skip link)
 │   │   ├── page.tsx                 # Landing page
 │   │   ├── globals.css              # Design tokens (OKLCH system)
+│   │   ├── gate/page.tsx            # Password gate page
 │   │   ├── step1/page.tsx           # Job posting input
 │   │   ├── step2/page.tsx           # Applicant profile
 │   │   ├── step3/page.tsx           # Document review
 │   │   ├── step4/page.tsx           # Interview preparation
 │   │   ├── done/page.tsx            # Completion page
 │   │   └── api/                     # Next.js API Routes (proxy)
+│   │       ├── auth/route.ts        # Cookie auth (password gate)
 │   │       ├── health/route.ts
 │   │       ├── scrape/route.ts
 │   │       ├── extract/route.ts
@@ -920,7 +956,7 @@ Each tab independently:
 ## 18. Known Constraints & Limitations
 
 1. **No persistence**: All data is lost when the browser tab closes (sessionStorage only)
-2. **Single-user**: No authentication, no user accounts, no multi-session support
+2. **Single shared password**: Password gate uses one global password (no per-user accounts or sessions)
 3. **Japanese-only**: UI text, prompts, and font support are Japanese-specific
 4. **AI cost**: Each generation consumes API tokens; no caching of LLM responses
 5. **File size**: Maximum 10MB upload per file

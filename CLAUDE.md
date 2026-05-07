@@ -14,10 +14,12 @@
 
 | 環境 | URL |
 |---|---|
-| **本番（フロント）** | https://nextcareer.pro |
+| **本番（フロント）** | https://nextcareer.pro （パスワードゲートあり） |
 | **Railway（バック）** | https://naitei-backend-production.up.railway.app |
 | Vercel Dashboard | https://vercel.com/dashboard |
 | Railway Dashboard | https://railway.app |
+
+> **パスワードゲート**: `webapp/middleware.ts` が全リクエストをチェック。未認証時は `/gate` へリダイレクト。Cookie `naitei_auth` で7日間認証を維持。パスワードは Vercel 環境変数 `BASIC_AUTH_PASS`（デフォルト: `1616`）。
 
 ---
 

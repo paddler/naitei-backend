@@ -21,6 +21,7 @@
 - **AI**: Claude (haiku-4-5) → OpenAI (gpt-4o) → Gemini (gemini-2.5-flash) のカスケード
 - **状態管理**: DB なし。`sessionStorage` のみ（`naitei_company` / `naitei_applicant`）
 - **通信**: SSE ストリーミング（リアルタイム表示）
+- **認証**: Cookie ベースのパスワードゲート（`/gate` ページ、`naitei_auth` Cookie、7日間有効）
 
 ---
 

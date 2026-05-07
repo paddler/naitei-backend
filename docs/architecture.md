@@ -85,8 +85,10 @@ flowchart TB
 
     subgraph VERCEL["☁️ Vercel ── お店のフロント"]
         direction TB
+        MW["Middleware<br/>（入口の受付）"]
         NEXT["Next.js<br/>（接客係）"]
         API_ROUTE["API Routes<br/>（注文の取り次ぎ役）"]
+        MW --> NEXT
         NEXT --> API_ROUTE
     end
 
@@ -332,6 +334,9 @@ flowchart LR
 
 | ソースコード | 本番での役割 | デプロイ先 |
 |---|---|---|
+| `webapp/middleware.ts` | パスワードゲート（全リクエストを認証チェック） | Vercel |
+| `webapp/app/gate/page.tsx` | パスワード入力画面 | Vercel |
+| `webapp/app/api/auth/route.ts` | 認証API（Cookie 発行） | Vercel |
 | `webapp/app/page.tsx` | トップページ（ランディング） | Vercel |
 | `webapp/app/step1/page.tsx` | Step 1：求人情報入力画面 | Vercel |
 | `webapp/app/step2/page.tsx` | Step 2：応募者情報入力画面 | Vercel |
@@ -352,6 +357,7 @@ flowchart LR
 
 | ブラウザで見るURL | ソースコード | 画面の役割 |
 |---|---|---|
+| `nextcareer.pro/gate` | `webapp/app/gate/page.tsx` | パスワード入力（未認証時に自動リダイレクト） |
 | `nextcareer.pro/` | `webapp/app/page.tsx` | トップページ |
 | `nextcareer.pro/step1` | `webapp/app/step1/page.tsx` | 求人情報入力 |
 | `nextcareer.pro/step2` | `webapp/app/step2/page.tsx` | 応募者情報入力 |
