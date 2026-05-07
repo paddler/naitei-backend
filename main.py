@@ -1020,6 +1020,12 @@ async def interview_qa(body: InterviewGenRequest, request: Request):
 応募先情報: {company_json}
 面接官: {interviewer}
 
+⚠️ 出力ルール（必ず守ること）:
+- コードブロック（```markdown や ``` など）で囲まない
+- 前置き文・説明文・コメントを一切書かない
+- 最初の文字からMarpスライドの内容を直接出力する
+- 出力の最初は `<!-- _class: title -->` で始まる
+
 # 出力形式：Marpスライド形式（想定問答集）
 
 スライド区切り文字は `---`（前後に空行）。目標ページ数：**25〜35スライド**。
@@ -1099,6 +1105,12 @@ async def interview_pr(body: InterviewGenRequest, request: Request):
     interview_date = body.company.interview_date or ""
     prompt = f"""応募者情報: {applicant_json}
 応募先情報: {company_json}
+
+⚠️ 出力ルール（必ず守ること）:
+- コードブロック（```markdown や ``` など）で囲まない
+- 前置き文・説明文・コメントを一切書かない
+- 最初の文字からMarpスライドの内容を直接出力する
+- 出力の最初は `<!-- _class: title -->` で始まる
 
 # 出力形式：Marpスライド形式（自己PR案）
 
@@ -1180,6 +1192,12 @@ async def interview_questions(body: InterviewGenRequest, request: Request):
     interview_date = body.company.interview_date or ""
     prompt = f"""応募者情報: {applicant_json}
 応募先情報: {company_json}
+
+⚠️ 出力ルール（必ず守ること）:
+- コードブロック（```markdown や ``` など）で囲まない
+- 前置き文・説明文・コメントを一切書かない
+- 最初の文字からMarpスライドの内容を直接出力する
+- 出力の最初は `<!-- _class: title -->` で始まる
 
 # 出力形式：Marpスライド形式（逆質問集）
 
@@ -1267,6 +1285,12 @@ async def interview_checklist(body: InterviewGenRequest, request: Request):
     interview_date = body.company.interview_date or ""
     prompt = f"""応募者情報: {applicant_json}
 応募先情報: {company_json}
+
+⚠️ 出力ルール（必ず守ること）:
+- コードブロック（```markdown や ``` など）で囲まない
+- 前置き文・説明文・コメントを一切書かない
+- 最初の文字からMarpスライドの内容を直接出力する
+- 出力の最初は `<!-- _class: title -->` で始まる
 
 # 出力形式：Marpスライド形式（事前準備チェックリスト）
 
