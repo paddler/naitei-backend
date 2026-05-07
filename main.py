@@ -545,7 +545,7 @@ class ClaudeProvider(AIProvider):
 
     async def generate_text(self, prompt: str, *, system: str = "", model: str = "claude-haiku-4-5", **kw: Any) -> dict:
         # Adjust max_tokens based on model
-        max_tokens = 2048 if "haiku" in model else 4096
+        max_tokens = 8192
 
         # Create explicit http_client to avoid deprecated proxies parameter issue
         http_client = httpx.AsyncClient(timeout=120)
@@ -579,7 +579,7 @@ class ClaudeProvider(AIProvider):
 
     async def stream_text(self, prompt: str, *, system: str = "", model: str = "claude-haiku-4-5", **kw: Any) -> AsyncIterator[dict]:
         # Adjust max_tokens based on model
-        max_tokens = 2048 if "haiku" in model else 4096
+        max_tokens = 8192
 
         # Create explicit http_client to avoid deprecated proxies parameter issue
         http_client = httpx.AsyncClient(timeout=120)
@@ -633,7 +633,7 @@ class ClaudeProvider(AIProvider):
 
     async def generate_from_image(self, image: bytes, mime: str, prompt: str, *, model: str = "claude-haiku-4-5", **kw: Any) -> dict:
         # Adjust max_tokens based on model
-        max_tokens = 2048 if "haiku" in model else 4096
+        max_tokens = 8192
         http_client = httpx.AsyncClient(timeout=120)
         try:
             client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=http_client)
