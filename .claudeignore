@@ -1,0 +1,24 @@
+# ===== ビルド成果物・キャッシュ =====
+webapp/.next/
+webapp/node_modules/
+webapp/coverage/
+webapp/playwright-report/
+webapp/test-results/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# ===== 環境変数・秘密情報 =====
+.env
+.env.local
+.env*.local
+webapp/.env
+webapp/.env.local
+webapp/.env*.local
+
+# ===== OS・エディタ =====
+.DS_Store
+**/.DS_Store
+*.swp
+*.swo
+Thumbs.db

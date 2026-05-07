@@ -171,6 +171,7 @@ class CompanyInfo(CamelModel):
     salary: Optional[str] = None
     selection_flow: list[str] = Field(default_factory=list, alias="selectionFlow")
     raw_text: str = Field("", alias="rawText")
+    interview_date: str = Field("", alias="interviewDate")
 
 
 class MarkdownDoc(CamelModel):
@@ -294,6 +295,17 @@ class PdfRequest(CamelModel):
     company_name: str = Field("", alias="companyName")
     interview_date: Optional[str] = Field(None, alias="interviewDate")
     job_title: str = Field("", alias="jobTitle")
+
+
+class InterviewSlidePdfRequest(BaseModel):
+    qa: str = ""
+    pr: str = ""
+    questions: str = ""
+    checklist: str = ""
+    applicant_name: str = ""
+    company_name: str = ""
+    job_title: str = ""
+    interview_date: str = ""
 
 
 class ResearchRequest(CamelModel):
@@ -997,53 +1009,335 @@ async def review(body: ReviewRequest, request: Request):
 async def interview_qa(body: InterviewGenRequest, request: Request):
     rid = request.state.request_id
     provider = get_provider()
-    prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        f"Interviewer: {body.interviewer_profile or 'Unknown'}\n"
-        "Generate 30+ interview Q&A in categories A-H (intro, motivation, career, job-specific, fit, risk, values, closing). "
-        "Use STAR/PREP format, 30-90 second spoken Japanese, include applicant-specific episodes."
-    )
-    return await sse_stream(provider, prompt, "You are a Japanese interview preparation expert.", TaskKind.GEN_QA, rid)
+    applicant_json = body.applicant.model_dump_json(by_alias=True)
+    company_json = body.company.model_dump_json(by_alias=True)
+    interviewer = body.interviewer_profile or "未判明（役職・部署・組織ミッションから想定プロファイルを構築すること）"
+    applicant_name = body.applicant.name or "応募者"
+    company_name = body.company.name or "応募先"
+    job_title = body.company.job_title or "応募職種"
+    interview_date = body.company.interview_date or ""
+    prompt = f"""応募者情報: {applicant_json}
+応募先情報: {company_json}
+面接官: {interviewer}
+
+# 出力形式：Marpスライド形式（想定問答集）
+
+スライド区切り文字は `---`（前後に空行）。目標ページ数：**25〜35スライド**。
+スライドCSSクラスの指定は `<!-- _class: クラス名 -->` をスライド冒頭に記述。
+
+使用できるCSSクラス：
+- `<!-- _class: title -->` … 表紙（グラデーション紺背景）
+- `<div class="tip">` … 黄背景ヒントボックス
+- `<div class="sep"></div>` … 破線セパレーター（同一スライドで2問ペア時に使用）
+- `<div class="two-col"><div>左</div><div>右</div></div>` … 2カラム
+- `<div class="magnet">` … 磁力ワード（黄破線枠）
+- blockquote (`>`) … 面接回答本文
+
+## 構成テンプレート
+
+スライド1: 表紙
+```
+<!-- _class: title -->
+
+# 想定問答集
+
+## {company_name} 面接対策
+
+**{applicant_name}**　{f'面接日：{interview_date}' if interview_date else ''}
+{job_title}
+```
+
+スライド2: 5原則 ＆ 磁力キーワード
+
+スライド3〜4: Q早見表（カテゴリ×推奨度×ページ番号）テーブル×2枚
+
+スライド5〜30以降: Q&Aスライド群
+- カテゴリ見出し（A〜H）ごとにh2見出しを入れる
+- 4行以下の回答は2問1スライドにペアリング（`<div class="sep"></div>`で区切る）
+- 長い回答は1問1スライド、blockquoteで本文、`<div class="tip">コツ</div>`で補足
+
+最終スライド: リスク早見表 + カバレッジチェック表（テーブル）
+
+## Q&Aスライドの形式例（2問ペア）
+
+```
+## A. 導入・定番質問
+
+### Q1. 簡単に自己紹介をお願いします
+
+> 「回答本文を口語体・丁寧体で記述」
+
+<div class="tip">💡 コツ：ポイントを記述</div>
+
+<div class="sep"></div>
+
+### Q2. 次の質問文
+
+> 「回答」
+
+<div class="tip">💡 コツ</div>
+```
+
+## 生成ルール
+- カテゴリA〜H、最低30問（応募者固有エピソード・職歴・資格を具体的に織り込む）
+- Fカテゴリ（リスク質問）は必ず含め、応募者のリスク要因に正面から対処
+- 業界・職種固有の観点を追加（公務員：中立公正・法令遵守等）
+- 回答は30〜90秒の口語（書面の文章ではなく話し言葉）
+- `---` で区切られた各スライドは960×540px相当に収まる量（多すぎない）"""
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。応募者固有のエピソードと業界知識を活かした実践的な面接対策スライドを作成します。", TaskKind.GEN_QA, rid)
 
 
 @app.post("/api/interview/pr")
 async def interview_pr(body: InterviewGenRequest, request: Request):
     rid = request.state.request_id
     provider = get_provider()
-    prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        "Generate self-PR in 3 versions: 60-second (~350 chars), 90-second (~500 chars), 3-minute (~900 chars). "
-        "Include core strength phrase, 3 career pillars, requirement mapping table, and NG expressions list."
-    )
-    return await sse_stream(provider, prompt, "You are a Japanese self-PR writing expert.", TaskKind.GEN_PR, rid)
+    applicant_json = body.applicant.model_dump_json(by_alias=True)
+    company_json = body.company.model_dump_json(by_alias=True)
+    applicant_name = body.applicant.name or "応募者"
+    company_name = body.company.name or "応募先"
+    job_title = body.company.job_title or "応募職種"
+    interview_date = body.company.interview_date or ""
+    prompt = f"""応募者情報: {applicant_json}
+応募先情報: {company_json}
+
+# 出力形式：Marpスライド形式（自己PR案）
+
+スライド区切り文字は `---`（前後に空行）。目標ページ数：**14〜18スライド**。
+
+使用できるCSSクラス：
+- `<!-- _class: title -->` … 表紙
+- `<!-- _class: core -->` … コアフレーズ強調（ダークネイビー背景）
+  - 内部に `<div class="bigbox">コアフレーズ</div>` を使う
+- `<div class="tip">` … ヒントボックス（黄）
+- `<div class="ng">` … NG表現ボックス（赤）
+- `<div class="ok">` … OKパターンボックス（緑）
+- `<div class="magnet">` … 磁力ワード（黄破線枠・大フォント）
+- `<div class="two-col"><div>左</div><div>右</div></div>` … 2カラム
+
+## 構成テンプレート（14〜18スライド）
+
+1. 表紙（`<!-- _class: title -->`）
+2. コアフレーズ（`<!-- _class: core -->`）: 強みを1フレーズに凝縮、bigboxに入れる
+3. 3バージョン使い分け表（テーブル）
+4. 60秒版 本文（blockquoteで本文、tip でポイント）
+5. 90秒版 本文①（前半）
+6. 90秒版 本文②（後半）＋ポイント
+7. 3分版 導入＋①前半
+8. 3分版 ①エピソード＋②
+9. 3分版 ③＋締め
+10. 求人要件対応表（テーブル）
+11. 音読練習ポイント
+12. NG表現リスト（`<div class="ng">`）
+13. 当日フロー（テーブル or リスト）
+14. 磁力ワード（`<div class="magnet">`）
+
+## 表紙スライド例
+
+```
+<!-- _class: title -->
+
+# 自己PR案
+
+## {company_name} 面接対策
+
+**{applicant_name}**　{f'面接日：{interview_date}' if interview_date else ''}
+{job_title}
+```
+
+## coreスライド例
+
+```
+<!-- _class: core -->
+
+# 🗝️ 自己PRの核（冒頭と末尾で必ず言う）
+
+<div class="bigbox">
+
+（強みを1フレーズに凝縮した文章）
+
+</div>
+```
+
+## 生成ルール
+- 各バージョンの冒頭と末尾に同一の強みフレーズを配置
+- 強みは1フレーズに凝縮（例：「現場に寄り添い、採用課題を解決する提案力」）
+- 口語体（丁寧体）、話し言葉
+- 応募者の職歴・資格・具体エピソードを盛り込む
+- 応募先の求人要件・ミッションとの接点を明示
+- 各スライドは960×540px相当に収まる量"""
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。応募者の強みを最大化する自己PR案スライドを作成します。", TaskKind.GEN_PR, rid)
 
 
 @app.post("/api/interview/questions")
 async def interview_questions(body: InterviewGenRequest, request: Request):
     rid = request.state.request_id
     provider = get_provider()
-    prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        "Generate 10+ reverse questions by category (business understanding, contribution, org understanding, long-term). "
-        "Include purpose for each, NG questions list, and usage strategy by time/interviewer type."
-    )
-    return await sse_stream(provider, prompt, "You are a Japanese interview reverse-question specialist.", TaskKind.GEN_QUESTIONS, rid)
+    applicant_json = body.applicant.model_dump_json(by_alias=True)
+    company_json = body.company.model_dump_json(by_alias=True)
+    applicant_name = body.applicant.name or "応募者"
+    company_name = body.company.name or "応募先"
+    job_title = body.company.job_title or "応募職種"
+    interview_date = body.company.interview_date or ""
+    prompt = f"""応募者情報: {applicant_json}
+応募先情報: {company_json}
+
+# 出力形式：Marpスライド形式（逆質問集）
+
+スライド区切り文字は `---`（前後に空行）。目標ページ数：**14〜18スライド**。
+
+使用できるCSSクラス：
+- `<!-- _class: title -->` … 表紙
+- `<!-- _class: hero -->` … 重要情報ハイライト（紺グラデ背景）
+  - 内部に `<div class="star-box">⭐ 内容</div>` を使う
+- `<div class="q-card">` … 質問カード（水色枠）
+  - q-card内部の見出しは `### Q番号.（★★★）タイトル`
+  - q-card内部でblockquoteを質問文に使う
+- `<div class="ng">` … NG表現（赤ボーダー）
+- `<div class="flow">` … フロー説明（水色枠）
+- `<div class="two-col">` … 2カラム
+
+## 構成テンプレート（14〜18スライド）
+
+1. 表紙（`<!-- _class: title -->`）
+2. ヒーロー（`<!-- _class: hero -->`）: 鉄板セット★★★と絶対NG
+3. 基本方針表（テーブル）
+4. 10問一覧表（テーブル）
+5〜7. 業務理解質問群（`<div class="q-card">`）× 2〜3スライド
+8〜10. 貢献意欲・組織理解・締め質問群 × 2〜3スライド
+11. NG逆質問リスト（`<div class="ng">`）
+12. 時間別使い分け戦略（フロー＋テーブル）
+13. 話し方テンプレート
+14. 面接官タイプ別反応予測＋差がつくパターン
+15. 最終確認リスト
+
+## 表紙スライド例
+
+```
+<!-- _class: title -->
+
+# 逆質問集
+
+## {company_name} 面接対策
+
+**{applicant_name}**　{f'面接日：{interview_date}' if interview_date else ''}
+{job_title}
+```
+
+## q-cardスライド例
+
+```
+<div class="q-card">
+
+### ⭐ Q1.【★★★最推奨】質問タイトル
+
+> 「質問文をここに書く」
+
+**狙い**：面接官に与えたい印象・引き出したい情報。
+
+</div>
+
+<div class="q-card">
+
+### Q2.【★★☆】質問タイトル
+
+> 「質問文」
+
+**狙い**：...
+
+</div>
+```
+
+## 生成ルール
+- 応募先の具体的な事業・施策・職種名を質問に織り込む
+- ★★★は最低3問用意
+- ★評価基準：★★★=最推奨（必ず聞く）/ ★★☆=時間があれば / ★☆☆=状況次第
+- 各スライドは960×540px相当に収まる量"""
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。面接官の印象を高める逆質問集スライドを作成します。", TaskKind.GEN_QUESTIONS, rid)
 
 
 @app.post("/api/interview/checklist")
 async def interview_checklist(body: InterviewGenRequest, request: Request):
     rid = request.state.request_id
     provider = get_provider()
-    prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        "Generate interview preparation checklist covering 7 phases: 3 days before, day before, morning of, "
-        "entering/exiting, during interview, after interview, waiting period. Include emergency procedures."
-    )
-    return await sse_stream(provider, prompt, "You are a Japanese interview preparation coach.", TaskKind.GEN_CHECKLIST, rid)
+    applicant_json = body.applicant.model_dump_json(by_alias=True)
+    company_json = body.company.model_dump_json(by_alias=True)
+    applicant_name = body.applicant.name or "応募者"
+    company_name = body.company.name or "応募先"
+    job_title = body.company.job_title or "応募職種"
+    interview_date = body.company.interview_date or ""
+    prompt = f"""応募者情報: {applicant_json}
+応募先情報: {company_json}
+
+# 出力形式：Marpスライド形式（事前準備チェックリスト）
+
+スライド区切り文字は `---`（前後に空行）。目標ページ数：**16〜22スライド**。
+
+使用できるCSSクラス：
+- `<!-- _class: title -->` … 表紙
+- `<!-- _class: hero -->` … 重要情報ハイライト（紺グラデ背景）
+- `<!-- _class: mantra -->` … 面接直前の心の呪文（末尾専用）
+  - 内部に `<div class="mantra-box">① ...\n② ...\n③ ...</div>` を使う
+- `<div class="flow">` … 入退室フロー（水色枠）
+- `<div class="two-col">` … 2カラム
+- `<div class="tip">` … ヒント・注意
+- `<div class="ng">` … NG行動（赤ボーダー）
+- チェックボックスリスト `- [ ] 項目`
+
+## 構成テンプレート（16〜22スライド）
+
+1. 表紙（`<!-- _class: title -->`）
+2. ヒーロー（`<!-- _class: hero -->`）: 面接基本情報・アクセス表
+3. タイムライン早見表（テーブル）
+4. 3日前: 書類・知識（`<div class="two-col">`）
+5. 3日前: 服装・健康
+6. 前日: 経路・パッキング（`<div class="two-col">`）
+7. 当日朝
+8. 入室の流れ（`<div class="flow">`）
+9. 着席後の姿勢・話し方（`<div class="two-col">`）＋NG
+10. 面接中の応急対応
+11. 退室の流れ（`<div class="flow">`）
+12. 面接後・合否連絡（`<div class="two-col">`）
+13. 緊急時対応（遅刻・体調不良・想定外質問）
+14. 前日夜最終チェック＋第一印象
+15. 心の呪文（`<!-- _class: mantra -->`）
+
+## 表紙スライド例
+
+```
+<!-- _class: title -->
+
+# 事前準備チェックリスト
+
+## {company_name} 面接対策
+
+**{applicant_name}**　{f'面接日：{interview_date}' if interview_date else ''}
+{job_title}
+```
+
+## flowスライド例（入室の流れ）
+
+```
+# 📋 入室の流れ
+
+<div class="flow">
+
+① ドアの前で一呼吸
+↓　② ノック3回（3回）
+↓　③ 「どうぞ」の声を待つ
+↓　④ 「失礼いたします」と入室
+↓　⑤ ドアを静かに閉める（後ろ手NG）
+↓　⑥ 「よろしくお願いいたします」と一礼
+
+</div>
+```
+
+## 生成ルール
+- 応募者固有の持ち物（資格証明書・ポートフォリオ等）を明記
+- 応募先の業界特性・職種特性に合わせた具体的な内容
+- チェックボックス `- [ ]` 形式を徹底
+- 各スライドは960×540px相当に収まる量
+- 最終スライドは必ず mantra クラスで締める"""
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。応募者が万全の準備で面接に臨めるチェックリストスライドを作成します。", TaskKind.GEN_CHECKLIST, rid)
 
 
 @app.post("/api/interview/chat")
@@ -1052,12 +1346,13 @@ async def interview_chat(body: ChatRequest, request: Request):
     provider = get_provider()
     history = "\n".join(f"[{m.role}]: {m.content}" for m in body.messages)
     prompt = (
-        f"Applicant: {body.applicant.model_dump_json(by_alias=True)}\n"
-        f"Company: {body.company.model_dump_json(by_alias=True)}\n"
-        f"Conversation:\n{history}\n"
-        "Continue the interview coaching conversation. Help the applicant deepen their answers."
+        f"応募者情報: {body.applicant.model_dump_json(by_alias=True)}\n"
+        f"応募先情報: {body.company.model_dump_json(by_alias=True)}\n"
+        f"会話履歴:\n{history}\n"
+        "会話を継続し、応募者が面接回答をより深められるようコーチングしてください。"
+        "具体的な改善点・別の言い回し・追加エピソードの引き出し方を提案してください。"
     )
-    return await sse_stream(provider, prompt, "You are an interactive interview coach for Japanese job seekers.", TaskKind.CHAT, rid)
+    return await sse_stream(provider, prompt, "あなたは日本の就職・転職支援の専門家です。対話形式で面接回答をブラッシュアップするコーチングを行います。", TaskKind.CHAT, rid)
 
 
 @app.post("/api/research")
@@ -1075,83 +1370,269 @@ async def research(body: ResearchRequest, request: Request):
 # --- /api/pdf  (ReportLab ベース PDF 生成) ---
 
 def _markdown_to_pdf_bytes(title: str, markdown_text: str, header: str, footer: str) -> bytes:
-    """マークダウンテキストを ReportLab で PDF バイト列に変換する。"""
+    """マークダウンテキストを ReportLab で PDF バイト列に変換する。Interview_Workflow Marp デザイン準拠。"""
+    import re
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle, KeepTogether
 
-    # Use globally pre-registered font (set at module startup by _init_jp_font)
     font_name = _JP_FONT_NAME
     bold_font = _JP_FONT_BOLD
 
     buf = BytesIO()
+    page_w = A4[0] - 40 * mm  # usable width
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=20 * mm, rightMargin=20 * mm,
-        topMargin=25 * mm, bottomMargin=25 * mm,
+        topMargin=20 * mm, bottomMargin=20 * mm,
     )
 
     styles = getSampleStyleSheet()
-    style_normal = ParagraphStyle(
-        "jp_normal", parent=styles["Normal"],
-        fontName=font_name, fontSize=10, leading=16, spaceAfter=4,
-    )
-    style_h1 = ParagraphStyle(
-        "jp_h1", parent=styles["Heading1"],
-        fontName=bold_font, fontSize=16, leading=22, spaceBefore=12, spaceAfter=6,
-        textColor=colors.HexColor("#0b1e4d"),
-    )
-    style_h2 = ParagraphStyle(
-        "jp_h2", parent=styles["Heading2"],
-        fontName=bold_font, fontSize=13, leading=18, spaceBefore=10, spaceAfter=4,
-        textColor=colors.HexColor("#1e40af"),
-    )
-    style_h3 = ParagraphStyle(
-        "jp_h3", parent=styles["Heading3"],
-        fontName=bold_font, fontSize=11, leading=16, spaceBefore=8, spaceAfter=3,
-        textColor=colors.HexColor("#374151"),
-    )
-    style_header = ParagraphStyle(
-        "jp_header", parent=styles["Normal"],
-        fontName=bold_font, fontSize=8, textColor=colors.gray, alignment=1,
-    )
+    sn = ParagraphStyle("jp_n", parent=styles["Normal"], fontName=font_name, fontSize=10, leading=16, spaceAfter=3)
+    sh1 = ParagraphStyle("jp_h1", parent=styles["Heading1"], fontName=bold_font, fontSize=16, leading=22,
+                         spaceBefore=10, spaceAfter=4, textColor=colors.HexColor("#0b1e4d"))
+    sh2 = ParagraphStyle("jp_h2", parent=styles["Heading2"], fontName=bold_font, fontSize=13, leading=18,
+                         spaceBefore=8, spaceAfter=3, textColor=colors.HexColor("#1e40af"))
+    sh3 = ParagraphStyle("jp_h3", parent=styles["Heading3"], fontName=bold_font, fontSize=11, leading=15,
+                         spaceBefore=6, spaceAfter=2, textColor=colors.HexColor("#1e3a8a"))
+    s_meta = ParagraphStyle("jp_meta", parent=styles["Normal"], fontName=bold_font, fontSize=8,
+                            textColor=colors.gray, alignment=1)
+    s_box = ParagraphStyle("jp_box", parent=styles["Normal"], fontName=font_name, fontSize=10, leading=16)
+    s_list = ParagraphStyle("jp_list", parent=styles["Normal"], fontName=font_name, fontSize=10, leading=16,
+                            leftIndent=10)
+    s_bq = ParagraphStyle("jp_bq", parent=styles["Normal"], fontName=font_name, fontSize=10, leading=16,
+                           textColor=colors.HexColor("#1e40af"))
+    s_th = ParagraphStyle("jp_th", parent=styles["Normal"], fontName=bold_font, fontSize=9, leading=13,
+                          textColor=colors.white)
+    s_td = ParagraphStyle("jp_td", parent=styles["Normal"], fontName=font_name, fontSize=9, leading=13)
+    s_td_alt = ParagraphStyle("jp_td_alt", parent=styles["Normal"], fontName=font_name, fontSize=9, leading=13)
 
-    story = []
-    # Page header
-    story.append(Paragraph(header, style_header))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#3b82f6")))
-    story.append(Spacer(1, 6 * mm))
-    story.append(Paragraph(title, style_h1))
-    story.append(Spacer(1, 4 * mm))
+    def _xml(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    for line in markdown_text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            story.append(Spacer(1, 3 * mm))
-            continue
-        # Escape XML special chars for ReportLab
-        safe = stripped.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if stripped.startswith("### "):
-            story.append(Paragraph(safe[4:], style_h3))
-        elif stripped.startswith("## "):
-            story.append(Paragraph(safe[3:], style_h2))
-        elif stripped.startswith("# "):
-            story.append(Paragraph(safe[2:], style_h1))
-        elif stripped.startswith("---"):
-            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
+    def _inline(text: str) -> str:
+        """Convert **bold** and *italic* to ReportLab XML tags."""
+        s = _xml(text)
+        s = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', s)
+        s = re.sub(r'\*(.+?)\*', r'<i>\1</i>', s)
+        return s
+
+    def _colored_box(lines: list[str], bg: str, border: str) -> Table:
+        inner_paras = [Paragraph(_inline(ln), s_box) for ln in lines if ln.strip()]
+        if not inner_paras:
+            inner_paras = [Spacer(1, 1 * mm)]
+        inner = [[p] for p in inner_paras]
+        content_tbl = Table(inner, colWidths=[page_w - 14])
+        content_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(bg)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        outer = Table([[content_tbl]], colWidths=[page_w])
+        outer.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(bg)),
+            ("LINEBEFORE", (0, 0), (0, -1), 4, colors.HexColor(border)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        return outer
+
+    def _render_table(rows: list[str]) -> Table | None:
+        parsed: list[list[str]] = []
+        for row in rows:
+            if re.match(r'^[\|\s\-:]+$', row):
+                continue  # separator row
+            cells = [c.strip() for c in row.strip().strip("|").split("|")]
+            parsed.append(cells)
+        if not parsed:
+            return None
+        max_cols = max(len(r) for r in parsed)
+        col_w = page_w / max_cols
+        data = []
+        for i, row in enumerate(parsed):
+            padded = row + [""] * (max_cols - len(row))
+            style = s_th if i == 0 else (s_td_alt if i % 2 == 0 else s_td)
+            data.append([Paragraph(_inline(c), style) for c in padded])
+        tbl = Table(data, colWidths=[col_w] * max_cols, repeatRows=1)
+        ts = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ]
+        for ri in range(1, len(data)):
+            if ri % 2 == 0:
+                ts.append(("BACKGROUND", (0, ri), (-1, ri), colors.HexColor("#f1f5f9")))
+        tbl.setStyle(TableStyle(ts))
+        return tbl
+
+    # ── block collector ───────────────────────────────────────────────────
+    BlockType = str
+    Block = dict
+
+    def flush_block(blk: Block, story: list) -> None:
+        btype = blk.get("type")
+        blines = blk.get("lines", [])
+        if not blines and btype not in ("hr", "space"):
+            return
+        if btype == "space":
             story.append(Spacer(1, 2 * mm))
-        else:
-            # Bold (**text**) simple conversion
-            safe = safe.replace("**", "<b>", 1) if "**" in safe else safe
-            safe = safe.replace("**", "</b>", 1) if "**" in safe else safe
-            story.append(Paragraph(safe, style_normal))
+        elif btype == "hr":
+            story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#93c5fd"),
+                                    dash=(4, 3), spaceAfter=3 * mm, spaceBefore=2 * mm))
+        elif btype == "h1":
+            story.append(Paragraph(_inline(blines[0]), sh1))
+        elif btype == "h2":
+            story.append(Paragraph(_inline(blines[0]), sh2))
+        elif btype == "h3":
+            story.append(Paragraph(_inline(blines[0]), sh3))
+        elif btype == "hint":
+            story.append(_colored_box(blines, "#fef3c7", "#f59e0b"))
+            story.append(Spacer(1, 2 * mm))
+        elif btype == "ng":
+            story.append(_colored_box(blines, "#fef2f2", "#ef4444"))
+            story.append(Spacer(1, 2 * mm))
+        elif btype == "ok":
+            story.append(_colored_box(blines, "#ecfdf5", "#10b981"))
+            story.append(Spacer(1, 2 * mm))
+        elif btype == "blockquote":
+            story.append(_colored_box(blines, "#eff6ff", "#3b82f6"))
+            story.append(Spacer(1, 2 * mm))
+        elif btype == "table":
+            tbl = _render_table(blines)
+            if tbl:
+                story.append(tbl)
+                story.append(Spacer(1, 2 * mm))
+        elif btype == "list":
+            for ln in blines:
+                story.append(Paragraph(_inline(ln), s_list))
+        else:  # para
+            for ln in blines:
+                if ln.strip():
+                    story.append(Paragraph(_inline(ln), sn))
 
-    # Page footer
-    story.append(Spacer(1, 6 * mm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
-    story.append(Paragraph(footer, style_header))
+    story: list = []
+
+    # ── page header band (navy gradient simulation) ───────────────────────
+    header_style = ParagraphStyle("hp_title", parent=styles["Normal"], fontName=bold_font,
+                                  fontSize=14, textColor=colors.white, leading=18)
+    header_sub = ParagraphStyle("hp_sub", parent=styles["Normal"], fontName=font_name,
+                                fontSize=9, textColor=colors.HexColor("#93c5fd"), leading=13)
+    hdr_content = Table(
+        [[Paragraph(title, header_style)], [Paragraph(_xml(header), header_sub)]],
+        colWidths=[page_w],
+    )
+    hdr_content.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0b1e4d")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (0, 0), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(hdr_content)
+    story.append(Spacer(1, 5 * mm))
+
+    # ── parse markdown into blocks ─────────────────────────────────────────
+    current: Block = {"type": "para", "lines": []}
+
+    def switch(new_type: BlockType) -> None:
+        nonlocal current
+        flush_block(current, story)
+        current = {"type": new_type, "lines": []}
+
+    for raw_line in markdown_text.splitlines():
+        stripped = raw_line.strip()
+
+        if not stripped:
+            if current["type"] in ("table", "hint", "ng", "ok", "blockquote"):
+                switch("space")
+            else:
+                if current["lines"]:
+                    switch("space")
+                else:
+                    current = {"type": "space", "lines": []}
+                    flush_block(current, story)
+                    current = {"type": "para", "lines": []}
+            continue
+
+        if stripped.startswith("### "):
+            switch("h3")
+            current["lines"].append(stripped[4:])
+            flush_block(current, story)
+            current = {"type": "para", "lines": []}
+        elif stripped.startswith("## "):
+            switch("h2")
+            current["lines"].append(stripped[3:])
+            flush_block(current, story)
+            current = {"type": "para", "lines": []}
+        elif stripped.startswith("# "):
+            switch("h1")
+            current["lines"].append(stripped[2:])
+            flush_block(current, story)
+            current = {"type": "para", "lines": []}
+        elif stripped.startswith("---") and re.match(r'^-{3,}$', stripped):
+            switch("hr")
+            flush_block(current, story)
+            current = {"type": "para", "lines": []}
+        elif stripped.startswith("|"):
+            if current["type"] != "table":
+                switch("table")
+            current["lines"].append(stripped)
+        elif stripped.startswith("> ") or stripped == ">":
+            if current["type"] != "blockquote":
+                switch("blockquote")
+            current["lines"].append(stripped[2:] if stripped.startswith("> ") else "")
+        elif stripped.startswith("💡"):
+            if current["type"] != "hint":
+                switch("hint")
+            current["lines"].append(stripped)
+        elif stripped.startswith("🚫"):
+            if current["type"] != "ng":
+                switch("ng")
+            current["lines"].append(stripped)
+        elif stripped.startswith("✅"):
+            if current["type"] != "ok":
+                switch("ok")
+            current["lines"].append(stripped)
+        elif re.match(r'^- \[[ x]\]', stripped):
+            # checkbox list item
+            if current["type"] != "list":
+                switch("list")
+            checked = stripped[3] == "x"
+            rest = stripped[6:]
+            sym = "☑" if checked else "☐"
+            current["lines"].append(f"{sym} {rest}")
+        elif re.match(r'^[-*] ', stripped):
+            if current["type"] != "list":
+                switch("list")
+            current["lines"].append("• " + stripped[2:])
+        elif re.match(r'^\d+\. ', stripped):
+            if current["type"] != "list":
+                switch("list")
+            current["lines"].append(stripped)
+        else:
+            if current["type"] not in ("para",):
+                switch("para")
+            current["lines"].append(stripped)
+
+    flush_block(current, story)
+
+    # ── page footer ────────────────────────────────────────────────────────
+    story.append(Spacer(1, 5 * mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cbd5e1")))
+    story.append(Paragraph(_xml(footer), s_meta))
 
     doc.build(story)
     return buf.getvalue()
@@ -1214,6 +1695,214 @@ async def generate_pdf(body: PdfRequest, request: Request):
         import traceback
         tb = traceback.format_exc()
         return err(f"PDF generation failed: {type(e).__name__}: {str(e)[:300]}\nTraceback:\n{tb[-800:]}", status=500, request_id=rid)
+
+
+# --- /api/interview/pdf  (WeasyPrint スライドPDF生成) ---
+
+_MARP_CSS = """
+@page {
+  size: 960px 540px;
+  margin: 0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; }
+.slide-page {
+  font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Meiryo', 'Noto Sans JP', sans-serif;
+  padding: 32px 46px;
+  font-size: 16px;
+  line-height: 1.5;
+  width: 960px;
+  height: 540px;
+  overflow: hidden;
+  position: relative;
+  background: #ffffff;
+  color: #1f2937;
+  page-break-after: always;
+}
+.slide-page:last-child { page-break-after: auto; }
+.slide-page.title {
+  background: linear-gradient(135deg, #0b1e4d 0%, #1e40af 60%, #3b82f6 100%);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.slide-page.title h1 { font-size: 54px; color: #ffffff; border: none; margin-bottom: 16px; }
+.slide-page.title h2 { font-size: 24px; color: #bfdbfe; font-weight: normal; border: none; }
+.slide-page.title p  { font-size: 20px; color: #dbeafe; margin-top: 20px; }
+.slide-page.core {
+  background: #0b1e4d;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.slide-page.core h1 { color: #fef3c7; border: none; font-size: 30px; }
+.slide-page.core .bigbox {
+  background: #1e3a8a;
+  border: 3px solid #fbbf24;
+  border-radius: 18px;
+  padding: 36px 52px;
+  margin-top: 24px;
+  font-size: 34px;
+  font-weight: bold;
+  color: #fef3c7;
+  max-width: 860px;
+  line-height: 1.4;
+}
+.slide-page.hero {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 32px 46px;
+}
+.slide-page.hero h1 { color: #fef3c7; border: none; font-size: 28px; }
+.slide-page.hero h2 { color: #bfdbfe; font-size: 20px; border: none; border-left: 4px solid #fbbf24; padding-left: 12px; margin-top: 12px; }
+.slide-page.hero blockquote { background: rgba(255,255,255,0.1); border-left: 4px solid #fbbf24; color: #f1f5f9; }
+.slide-page.hero .star-box { background: rgba(251,191,36,0.2); border: 2px solid #fbbf24; border-radius: 10px; padding: 12px 20px; margin: 8px 0; color: #fef3c7; }
+.slide-page.mantra {
+  background: #0b1e4d;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.slide-page.mantra h1 { color: #fef3c7; border: none; font-size: 26px; }
+.slide-page.mantra .mantra-box {
+  background: #1e3a8a;
+  border: 2px solid #fbbf24;
+  border-radius: 14px;
+  padding: 28px 40px;
+  margin-top: 20px;
+  font-size: 18px;
+  color: #f1f5f9;
+  line-height: 2.2;
+  text-align: left;
+  max-width: 860px;
+}
+.slide-page h1 { color: #0b1e4d; border-bottom: 3px solid #3b82f6; padding-bottom: 6px; font-size: 22px; margin-bottom: 10px; margin-top: 0; }
+.slide-page h2 { color: #1e40af; font-size: 18px; border-left: 5px solid #3b82f6; padding-left: 12px; margin-top: 12px; margin-bottom: 4px; }
+.slide-page h3 { color: #1e3a8a; font-size: 15px; margin-top: 10px; margin-bottom: 3px; }
+.slide-page strong { color: #b91c1c; font-weight: 700; }
+.slide-page blockquote { border-left: 5px solid #3b82f6; background: #eff6ff; padding: 10px 16px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.65; color: #1f2937; }
+.slide-page table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 14px; }
+.slide-page th { background: #1e40af; color: #ffffff; padding: 7px 10px; border: 1px solid #1e3a8a; text-align: center; }
+.slide-page td { padding: 7px 10px; border: 1px solid #cbd5e1; background: #ffffff; }
+.slide-page tr:nth-child(even) td { background: #f1f5f9; }
+.slide-page ul, .slide-page ol { font-size: 15px; line-height: 1.7; margin: 4px 0; padding-left: 1.5em; }
+.slide-page li { margin-bottom: 3px; }
+.slide-page p { margin: 6px 0; font-size: 15px; }
+.slide-page .tip { background: #fef3c7; border-left: 5px solid #f59e0b; padding: 7px 14px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 13px; color: #7c2d12; }
+.slide-page .recommend { background: #ecfdf5; border: 2px solid #10b981; padding: 10px 18px; margin: 8px 0; border-radius: 10px; font-size: 14px; }
+.slide-page .ng { background: #fef2f2; border-left: 5px solid #dc2626; padding: 10px 16px; margin: 8px 0; border-radius: 0 8px 8px 0; color: #7f1d1d; font-size: 14px; }
+.slide-page .ok { background: #ecfdf5; border-left: 5px solid #10b981; padding: 7px 14px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 13px; color: #065f46; }
+.slide-page .magnet { background: #fffbeb; border: 3px dashed #f59e0b; padding: 18px 24px; margin: 12px 0; border-radius: 12px; font-size: 18px; color: #78350f; line-height: 2; }
+.slide-page .q-card { background: #f8faff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 18px; margin: 8px 0; font-size: 14px; }
+.slide-page .q-card h3 { color: #1e40af; margin-top: 0; }
+.slide-page .star-row { background: #fffbeb; border: 2px solid #f59e0b; border-radius: 8px; padding: 10px 16px; margin: 6px 0; font-size: 14px; color: #78350f; }
+.slide-page .flow { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: 12px 20px; margin: 8px 0; font-size: 14px; line-height: 1.9; }
+.slide-page .sep { border: none; border-top: 2px dashed #93c5fd; margin: 10px 0; }
+.slide-page .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+"""
+
+
+def _marp_md_to_slides_html(markdown_text: str) -> list[tuple[str, str]]:
+    """Split Marp markdown by --- and return list of (slide_class, html) tuples."""
+    import re
+    import markdown2  # type: ignore[import]
+
+    parts = re.split(r'(?:^|\n)---(?:\n|$)', markdown_text)
+    slides: list[tuple[str, str]] = []
+    for part in parts:
+        class_match = re.search(r'<!--\s*_class:\s*(\S+)\s*-->', part)
+        slide_class = class_match.group(1) if class_match else ""
+        # Strip Marp-specific comments
+        cleaned = re.sub(r'<!--[^>]*-->', '', part).strip()
+        if not cleaned:
+            continue
+        html = markdown2.markdown(
+            cleaned,
+            extras=["fenced-code-blocks", "tables", "break-on-newline", "strike", "task_list"],
+        )
+        slides.append((slide_class, html))
+    return slides
+
+
+def _slides_to_pdf_bytes(title: str, markdown_text: str) -> bytes:
+    """Convert Marp-format markdown to PDF using WeasyPrint."""
+    from weasyprint import HTML, CSS  # type: ignore[import]
+
+    slides = _marp_md_to_slides_html(markdown_text)
+    if not slides:
+        slides = [("", f"<p>{title}</p>")]
+
+    sections = "\n".join(
+        f'<section class="slide-page {sc}">{html}</section>'
+        for sc, html in slides
+    )
+
+    full_html = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+</head>
+<body>
+{sections}
+</body>
+</html>"""
+
+    pdf_bytes = HTML(string=full_html).write_pdf(
+        stylesheets=[CSS(string=_MARP_CSS)]
+    )
+    return pdf_bytes
+
+
+@app.post("/api/interview/pdf")
+async def interview_slide_pdf(body: InterviewSlidePdfRequest, request: Request):
+    rid = request.state.request_id
+
+    doc_map = {
+        "01_想定問答集_slides":           body.qa,
+        "02_自己PR案_slides":             body.pr,
+        "03_逆質問集_slides":             body.questions,
+        "04_事前準備チェックリスト_slides": body.checklist,
+    }
+    present = {k: v for k, v in doc_map.items() if v and v.strip()}
+    if not present:
+        return err("No slide content provided", status=422, request_id=rid)
+
+    try:
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, md in present.items():
+                pdf_bytes = _slides_to_pdf_bytes(name, md)
+                zf.writestr(f"{name}.pdf", pdf_bytes)
+        buf.seek(0)
+
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="interview_slides.zip"',
+                "X-Request-Id": rid,
+            },
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return err(
+            f"Slide PDF generation failed: {type(e).__name__}: {str(e)[:300]}\n{tb[-600:]}",
+            status=500,
+            request_id=rid,
+        )
 
 
 # ---------------------------------------------------------------------------
